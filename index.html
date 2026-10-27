@@ -1,0 +1,578 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="検査入力">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#1f4e79">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<title>検査入力</title>
+<script src="config.js"></script>
+<style>
+:root {
+  --bg: #f3f5f8; --card: #fff; --ink: #1d2733; --sub: #5d6b7a; --line: #d5dbe3;
+  --pri: #1f4e79; --pri-ink: #fff; --todo: #7d8995; --work: #c76a12; --done: #23804d; --ng: #c62828; --mine: #fff4e5;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.5 -apple-system, "Hiragino Sans", "Hiragino Kaku Gothic ProN", sans-serif; -webkit-text-size-adjust: 100%; }
+button, input, select, textarea { font: inherit; color: inherit; }
+header.top { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 8px; padding: calc(env(safe-area-inset-top) + 8px) 16px 8px; background: var(--pri); color: var(--pri-ink); }
+header.top .ttl { flex: 1; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+header.top button.back { background: none; border: 0; color: inherit; font-size: 17px; padding: 4px 8px 4px 0; }
+.net { font-size: 12px; padding: 3px 10px; border-radius: 99px; background: rgba(255,255,255,.2); border: 0; color: #fff; white-space: nowrap; }
+.net.off { background: #b71c1c; }
+.net.pend { background: #e08a00; }
+main { padding: 12px 16px calc(env(safe-area-inset-bottom) + 96px); max-width: 760px; margin: 0 auto; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-bottom: 12px; }
+h2 { font-size: 18px; margin: 0 0 10px; }
+h3 { font-size: 16px; margin: 18px 0 6px; }
+h3 small { font-weight: 400; color: var(--sub); font-size: 12px; }
+label { display: block; font-size: 13px; color: var(--sub); margin-bottom: 10px; }
+label > input, label > select, label > textarea { display: block; width: 100%; margin-top: 4px; }
+input, select, textarea { font-size: 16px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; min-height: 42px; }
+input::placeholder { color: #b9c1cb; }
+input:disabled, select:disabled, textarea:disabled { background: #f0f2f5; color: var(--ink); opacity: 1; -webkit-text-fill-color: var(--ink); }
+textarea { min-height: 120px; resize: vertical; }
+.btn { display: block; width: 100%; padding: 13px; border-radius: 10px; border: 1px solid var(--line); background: #fff; font-weight: 600; margin-top: 10px; }
+.btn.primary { background: var(--pri); color: #fff; border-color: var(--pri); }
+.btn.ok { background: var(--done); color: #fff; border-color: var(--done); }
+.btn.warn { color: var(--ng); }
+.btn:disabled { opacity: .45; }
+.row { display: flex; gap: 8px; align-items: center; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }
+.muted { color: var(--sub); font-size: 13px; }
+.notice { padding: 10px 12px; border-radius: 10px; margin-bottom: 12px; font-size: 14px; }
+.notice.work { background: #fff1e0; border: 1px solid #f0c58f; }
+.notice.err { background: #fdecea; border: 1px solid #f3b4ae; }
+.notice.done { background: #e6f4ec; border: 1px solid #a9d8bc; }
+.filters { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; margin-bottom: 8px; }
+.filters button { flex: none; border: 1px solid var(--line); background: #fff; border-radius: 99px; padding: 6px 12px; font-size: 14px; }
+.filters button.on { background: var(--pri); color: #fff; border-color: var(--pri); }
+.search { width: 100%; margin-bottom: 10px; }
+.group { font-size: 13px; color: var(--sub); margin: 14px 0 6px; font-weight: 700; }
+.item { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 6px; }
+.item.mine { background: var(--mine); border-color: #f0c58f; }
+.item .main { flex: 1; min-width: 0; }
+.item .tag { font-weight: 700; }
+.item .sub { font-size: 13px; color: var(--sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.badge { flex: none; font-size: 12px; font-weight: 700; color: #fff; padding: 3px 9px; border-radius: 99px; max-width: 45%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.st-todo { background: var(--todo); } .st-work { background: var(--work); } .st-done { background: var(--done); } .st-pend { background: #e08a00; }
+dl.info { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; margin: 8px 0 0; font-size: 14px; }
+dl.info dt { color: var(--sub); }
+dl.info dd { margin: 0; word-break: break-all; }
+table.pt { width: 100%; border-collapse: collapse; font-size: 14px; margin-bottom: 6px; }
+table.pt caption { text-align: left; font-weight: 700; font-size: 13px; color: var(--sub); padding: 4px 0; }
+table.pt th { font-size: 11px; color: var(--sub); font-weight: 600; padding: 2px; }
+table.pt td { padding: 3px 2px; text-align: center; vertical-align: top; }
+table.pt td.ref { color: var(--sub); font-size: 13px; padding-top: 12px; white-space: nowrap; }
+table.pt input { width: 100%; min-width: 0; text-align: right; padding: 8px 6px; }
+.dev { font-size: 11px; color: var(--sub); text-align: right; min-height: 14px; }
+.dev.ng { color: var(--ng); font-weight: 700; }
+.chk { display: flex; align-items: center; gap: 8px; color: var(--ink); font-size: 15px; margin: 6px 0 12px; }
+.chk input { width: 22px; height: 22px; min-height: 0; margin: 0; }
+.names { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.names button { padding: 12px 4px; border: 1px solid var(--line); border-radius: 10px; background: #fff; font-size: 16px; }
+.actions { position: fixed; left: 0; right: 0; bottom: 0; z-index: 4; padding: 8px 16px calc(env(safe-area-inset-bottom) + 8px); background: rgba(243,245,248,.96); border-top: 1px solid var(--line); }
+.actions .inner { max-width: 760px; margin: 0 auto; display: flex; gap: 8px; }
+.actions .btn { margin: 0; }
+#kbbar { position: fixed; left: 0; right: 0; z-index: 20; display: flex; gap: 8px; padding: 6px 10px; background: #d1d5db; }
+#kbbar[hidden] { display: none; }
+#kbbar button { flex: 1; padding: 10px; border: 0; border-radius: 8px; background: #fff; font-size: 17px; font-weight: 700; }
+</style>
+</head>
+<body>
+<header class="top" id="top"></header>
+<main id="app"></main>
+<div id="kbbar" hidden>
+  <button type="button" data-kb="sign">± 符号</button>
+  <button type="button" data-kb="prev">↑ 前へ</button>
+  <button type="button" data-kb="next">↓ 次へ</button>
+  <button type="button" data-kb="done">閉じる</button>
+</div>
+<script>
+'use strict';
+const API = window.KENSA_API || '';
+const $ = s => document.querySelector(s);
+const h = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const ST = { TODO: '未着手', WORK: '作業中', DONE: '完了' };
+
+// ---- 端末内保存（圏外でも入力が消えないよう、変更のたびに書き込む）----
+const store = {
+  get(k, d) { try { const v = localStorage.getItem('kensa.' + k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem('kensa.' + k, JSON.stringify(v)); } catch (e) { alert('端末への保存に失敗しました: ' + e.message); } },
+};
+let cfg = store.get('cfg', null);          // { key, name }
+let names = store.get('names', []);
+let devices = store.get('devices', []);
+let fetchedAt = store.get('fetchedAt', '');
+let drafts = store.get('drafts', {});      // 機器id → { data, rev, pending, finish, blocked }
+let view = { screen: 'list', id: null, filter: store.get('filter', 'all'), q: '' };
+let online = true;
+let syncing = false;
+let syncTimer = null;
+
+if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+
+const saveDrafts = () => store.set('drafts', drafts);
+const getDev = id => devices.find(d => d.id === id);
+const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+const hm = s => s ? String(s).slice(5, 16).replace('-', '/') : '';
+const fmt = v => v == null || v === '' ? '' : String(+(+v).toFixed(4));
+
+// ---- サーバー通信 ----
+async function api(action, body) {
+  if (!API) throw Object.assign(new Error('config.js にサーバーのURLが設定されていません'), { code: 'config' });
+  let res;
+  try {
+    // Content-Type を付けない（text/plain）ことで、事前確認なしで Apps Script に送れる
+    res = await fetch(API, { method: 'POST', body: JSON.stringify(Object.assign({ action, key: cfg && cfg.key, name: cfg && cfg.name }, body)) });
+  } catch (e) {
+    setOnline(false);
+    throw Object.assign(new Error('通信できません（圏外の可能性があります）'), { code: 'offline' });
+  }
+  setOnline(true);
+  let j;
+  try { j = await res.json(); } catch (e) { throw Object.assign(new Error('サーバーの応答が読めません'), { code: 'bad' }); }
+  if (!j.ok) throw Object.assign(new Error(j.error), { code: j.code });
+  return j;
+}
+
+function setOnline(v) { online = v; renderNet(); }
+
+function updateDevice(d) {
+  const i = devices.findIndex(x => x.id === d.id);
+  if (i >= 0) devices[i] = d; else devices.push(d);
+  store.set('devices', devices);
+}
+
+async function refresh(quiet) {
+  try {
+    const j = await api('list', {});
+    devices = j.devices;
+    fetchedAt = j.now;
+    store.set('devices', devices);
+    store.set('fetchedAt', fetchedAt);
+  } catch (e) {
+    if (!quiet) alert(e.message);
+  }
+  if (view.screen === 'list') render();
+}
+
+// 未送信の入力を順に送る。失敗しても端末に残し、次の機会に再送する
+async function sync() {
+  if (syncing || !cfg) return;
+  syncing = true;
+  try {
+    for (const id of Object.keys(drafts)) {
+      const dr = drafts[id];
+      if (!dr.pending || dr.blocked) continue;
+      const rev = dr.rev;
+      try {
+        const j = await api('save', { id, data: dr.data, finish: !!dr.finish });
+        updateDevice(j.device);
+        const cur = drafts[id];
+        if (cur && cur.rev === rev) {
+          if (cur.finish) delete drafts[id]; else cur.pending = false;
+        }
+        saveDrafts();
+      } catch (e) {
+        if (['offline', 'busy', 'bad', 'auth', 'config'].includes(e.code)) break;
+        dr.blocked = e.message;  // ロックを失った等。データは残してユーザーに知らせる
+        saveDrafts();
+      }
+    }
+  } finally {
+    syncing = false;
+    renderNet();
+    if (view.screen === 'list') render();
+  }
+}
+
+function scheduleSync(ms) {
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(sync, ms);
+}
+
+setInterval(async () => {
+  if (!cfg) return;
+  await sync();
+  if (view.screen === 'list' && document.visibilityState === 'visible') refresh(true);
+}, 30000);
+window.addEventListener('online', () => sync());
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && cfg) { sync(); if (view.screen === 'list') refresh(true); } });
+
+// ---- データ ----
+function emptyCh() { return { up: ['', '', '', '', ''], down: ['', '', '', '', ''], adj: false, adjUp: ['', '', '', '', ''], adjDown: ['', '', '', '', ''] }; }
+
+function normalize(d, data) {
+  const prev = d.info.prev || {};
+  const base = {
+    date: today(), temp: '', result: '合格', overall: '合格',
+    note: (prev.note || []).join('\n'), inspectors: [cfg.name, ''],
+  };
+  const out = Object.assign(base, data || {});
+  out.ch = d.info.chs.map((_, k) => Object.assign(emptyCh(), ((data && data.ch) || [])[k] || {}));
+  return out;
+}
+
+function setPath(obj, path, val) {
+  const ks = path.split('.');
+  let o = obj;
+  for (let i = 0; i < ks.length - 1; i++) o = o[ks[i]];
+  o[ks[ks.length - 1]] = val;
+}
+
+function touchDraft(id) {
+  const dr = drafts[id];
+  dr.rev = (dr.rev || 0) + 1;
+  dr.pending = true;
+  saveDrafts();
+  renderNet();
+  scheduleSync(4000);
+}
+
+function localStatus(d) {
+  const dr = drafts[d.id];
+  if (dr && dr.finish && dr.pending) return { cls: 'pend', text: '完了(未送信)' };
+  if (d.status === ST.WORK) return { cls: 'work', text: d.worker === cfg.name ? '作業中(自分)' : '作業中 ' + d.worker };
+  if (d.status === ST.DONE) return { cls: 'done', text: '完了' };
+  return { cls: 'todo', text: '未着手' };
+}
+
+function countBlanks(d, data) {
+  let n = 0;
+  data.ch.forEach(c => {
+    const keys = c.adj ? [['up', 'down'], ['adjUp', 'adjDown']] : [['up', 'down']];
+    keys.forEach(([u, dn]) => {
+      for (let i = 0; i < 5; i++) {
+        if (String(c[u][i]).trim() === '') n++;
+        if (i < 4 && String(c[dn][i]).trim() === '') n++;
+      }
+    });
+  });
+  return n;
+}
+
+// ---- 画面 ----
+function render() {
+  if (!cfg || !cfg.name) return renderSetup();
+  if (view.screen === 'detail') return renderDetail();
+  renderList();
+}
+
+function renderTop(title, back) {
+  $('#top').innerHTML = `${back ? '<button class="back" data-act="back">‹ 一覧</button>' : ''}<div class="ttl">${h(title)}</div><button class="net" id="net" data-act="sync"></button>`;
+  renderNet();
+}
+
+function renderNet() {
+  const el = $('#net');
+  if (!el) return;
+  const n = Object.values(drafts).filter(d => d.pending).length;
+  el.className = 'net' + (!online ? ' off' : n ? ' pend' : '');
+  el.textContent = (online ? 'オンライン' : '圏外') + (n ? ` 未送信${n}` : '');
+}
+
+function renderSetup() {
+  renderTop('検査入力 初期設定');
+  $('#app').innerHTML = `
+    <section class="card">
+      <h2>初期設定</h2>
+      ${API ? '' : '<div class="notice err">config.js にサーバーのURLが設定されていません</div>'}
+      <label>合言葉<input id="s-key" autocomplete="off" autocapitalize="off" autocorrect="off" value="${h(cfg ? cfg.key : '')}"></label>
+      <button class="btn primary" data-act="connect">接続して名前を選ぶ</button>
+      <div id="s-names" style="margin-top:14px"></div>
+    </section>
+    <p class="muted">Safari の共有ボタン →「ホーム画面に追加」で、圏外でもアプリとして開けるようになります。ホーム画面のアイコンから開いて設定してください。</p>`;
+  if (cfg && names.length) renderNames();
+}
+
+function renderNames() {
+  $('#s-names').innerHTML = `<div class="muted" style="margin-bottom:8px">あなたの名前を選んでください</div>
+    <div class="names">${names.map(n => `<button data-act="pickname" data-name="${h(n)}">${h(n)}</button>`).join('')}</div>`;
+}
+
+const FILTERS = { all: 'すべて', mine: '自分', todo: '未着手', work: '作業中', done: '完了' };
+
+function renderList() {
+  renderTop(`検査入力（${cfg.name}）`);
+  const q = view.q.trim().toLowerCase();
+  const match = d => {
+    const st = d.status;
+    const dr = drafts[d.id];
+    if (view.filter === 'mine' && !(st === ST.WORK && d.worker === cfg.name) && !(dr && dr.pending)) return false;
+    if (view.filter === 'todo' && st !== ST.TODO) return false;
+    if (view.filter === 'work' && st !== ST.WORK) return false;
+    if (view.filter === 'done' && st !== ST.DONE) return false;
+    return !q || (d.tag + ' ' + d.title + ' ' + (d.info.name || '')).toLowerCase().includes(q);
+  };
+  const counts = Object.fromEntries(Object.values(ST).map(s => [s, devices.filter(d => d.status === s).length]));
+  const groups = {};
+  devices.filter(match).forEach(d => (groups[d.file] = groups[d.file] || []).push(d));
+  $('#app').innerHTML = `
+    <div class="filters">${Object.entries(FILTERS).map(([k, v]) => `<button class="${view.filter === k ? 'on' : ''}" data-act="filter" data-f="${k}">${v}</button>`).join('')}</div>
+    <input class="search" id="q" type="search" placeholder="タグ・名称で検索" value="${h(view.q)}">
+    <div class="muted">未着手 ${counts[ST.TODO]} ／ 作業中 ${counts[ST.WORK]} ／ 完了 ${counts[ST.DONE]}　<span>更新 ${h(hm(fetchedAt))}</span></div>
+    ${Object.entries(groups).map(([file, list]) => `
+      <div class="group">${h(file)}</div>
+      ${list.map(d => {
+        const s = localStatus(d);
+        const mine = d.status === ST.WORK && d.worker === cfg.name;
+        return `<button class="item ${mine ? 'mine' : ''}" data-act="open" data-id="${h(d.id)}">
+          <div class="main"><div class="tag">${h(d.tag)}</div><div class="sub">${h(d.title)}</div></div>
+          <span class="badge st-${s.cls}">${h(s.text)}</span></button>`;
+      }).join('')}`).join('') || '<p class="muted">該当する機器がありません</p>'}
+    <button class="btn" data-act="refresh">一覧を更新</button>
+    <button class="btn" data-act="logout" style="margin-top:24px">名前を変更する</button>`;
+}
+
+function renderDetail() {
+  const d = getDev(view.id);
+  if (!d) { view.screen = 'list'; return render(); }
+  renderTop(d.tag, true);
+  const mine = d.status === ST.WORK && d.worker === cfg.name;
+  if (mine && !drafts[d.id]) { drafts[d.id] = { data: normalize(d, d.data), rev: 0, pending: false }; saveDrafts(); }
+  const dr = drafts[d.id];
+  const i = d.info;
+  let head = '', body = '', actions = '';
+
+  if (dr && dr.blocked) {
+    head = `<div class="notice err">送信できませんでした：${h(dr.blocked)}<br>入力した値はこの端末に残っています。「作業を再開」でロックを取り直すと送信できます。</div>`;
+    body = form(d, dr.data, false);
+    actions = `<button class="btn primary" data-act="start">作業を再開</button>`;
+  } else if (mine) {
+    if (dr.finish && dr.pending) head = `<div class="notice work">完了済み（未送信）。電波が戻ると自動で送信されます。</div>`;
+    body = form(d, dr.data, true);
+    actions = `<button class="btn warn" data-act="release" style="flex:1">作業をやめる</button><button class="btn ok" data-act="finish" style="flex:2">完了して送信</button>`;
+  } else if (d.status === ST.WORK) {
+    head = `<div class="notice work"><b>${h(d.worker)}</b> さんが作業中です（${h(hm(d.startedAt))} 開始）。入力はできません。</div>`;
+    body = d.data ? form(d, normalize(d, d.data), false) : '';
+  } else if (d.status === ST.DONE) {
+    head = `<div class="notice done">完了済みです（${h(hm(d.updatedAt))}）${d.exportedAt ? '・Excel反映済み' : ''}</div>`;
+    body = form(d, normalize(d, d.data), false);
+    actions = `<button class="btn" data-act="reopen">修正のため再開する</button>`;
+  } else {
+    head = `<div class="notice">この機器は未着手です。「作業開始」を押すと、他の人は入力できなくなります。</div>`;
+    body = d.data ? form(d, normalize(d, d.data), false) : '';
+    actions = `<button class="btn primary" data-act="start">作業開始</button>`;
+  }
+
+  $('#app').innerHTML = `
+    <section class="card">
+      <div style="font-weight:700">${h(i.name || d.title)}</div>
+      <dl class="info">
+        <dt>No.</dt><dd>${h(i.no)}　管理番号 ${h(i.kanri)}</dd>
+        <dt>場所</dt><dd>${h(i.loc)}</dd>
+        <dt>型番</dt><dd>${h(i.model)}</dd>
+        <dt>製造番号</dt><dd>${h(i.serial)}</dd>
+        <dt>範囲</dt><dd>${(i.ranges || []).map(h).join('<br>')}</dd>
+        <dt>精度</dt><dd>±${h(i.accuracy)} %F.S</dd>
+        <dt>前回</dt><dd>${h(i.prev.date)}　${h((i.prev.inspectors || []).filter(Boolean).join('・'))}</dd>
+      </dl>
+    </section>
+    ${head}
+    ${body ? `<section class="card">${body}</section>` : ''}
+    ${actions ? `<div class="actions"><div class="inner">${actions}</div></div>` : ''}`;
+  if (body) updateDevs(d, (dr && (mine || dr.blocked)) ? dr.data : normalize(d, d.data));
+}
+
+function numInput(path, val, placeholder, editable) {
+  return `<input class="num" inputmode="decimal" autocomplete="off" data-k="${path}" value="${h(val)}" placeholder="${h(fmt(placeholder))}" ${editable ? '' : 'disabled'}><div class="dev" data-dev="${path}"></div>`;
+}
+
+function pointTable(ch, k, upKey, downKey, c, editable, caption, showPrev) {
+  const rows = ch.points.map((p, i) => `<tr>
+      <td class="ref">${h(fmt(p.pct))}%</td>
+      <td class="ref">${h(fmt(p.input))}</td>
+      <td class="ref">${h(fmt(p.expect))}</td>
+      <td>${numInput(`ch.${k}.${upKey}.${i}`, c[upKey][i], showPrev ? p.prevUp : '', editable)}</td>
+      <td>${i < 4 ? numInput(`ch.${k}.${downKey}.${i}`, c[downKey][i], showPrev ? p.prevDown : '', editable) : '<div class="ref" style="padding-top:12px">―</div>'}</td>
+    </tr>`).join('');
+  return `<table class="pt"><caption>${caption}</caption>
+    <colgroup><col style="width:13%"><col style="width:17%"><col style="width:16%"><col style="width:27%"><col style="width:27%"></colgroup>
+    <thead><tr><th>点</th><th>入力<br>${h(ch.unitIn)}</th><th>基準<br>${h(ch.unitDisp)}</th><th>UP</th><th>DOWN</th></tr></thead>
+    <tbody>${rows}</tbody></table>`;
+}
+
+function form(d, data, editable) {
+  const i = d.info;
+  const dis = editable ? '' : 'disabled';
+  const opt = (list, v) => list.map(x => `<option ${x === v ? 'selected' : ''}>${h(x)}</option>`).join('');
+  const nameOpts = v => `<option value=""></option>` + opt(names.includes(v) || !v ? names : [v].concat(names), v);
+  let html = `
+    <div class="grid2">
+      <label>試験日<input type="date" data-k="date" value="${h(data.date)}" ${dis}></label>
+      <label>温度 (℃)<input class="num" inputmode="decimal" data-k="temp" value="${h(data.temp)}" placeholder="${h(i.prev.temp)}" ${dis}></label>
+    </div>`;
+  i.chs.forEach((ch, k) => {
+    const c = data.ch[k];
+    html += `<h3>${i.chs.length > 1 ? 'CH' + (k + 1) + ' ' : ''}測定値 <small>目盛 ${h(ch.scale)}　薄字=前回値</small></h3>`;
+    html += pointTable(ch, k, 'up', 'down', c, editable, '調整前', true);
+    html += `<label class="chk"><input type="checkbox" data-k="ch.${k}.adj" ${c.adj ? 'checked' : ''} ${dis}>調整した（調整後の値も入力）</label>`;
+    if (c.adj) html += pointTable(ch, k, 'adjUp', 'adjDown', c, editable, '調整後', false);
+  });
+  html += `
+    <div class="grid2" style="margin-top:12px">
+      <label>判定<select data-k="result" ${dis}>${opt(['合格', '不合格'], data.result)}</select></label>
+      <label>総合判定<select data-k="overall" ${dis}>${opt(['合格', '不合格'], data.overall)}</select></label>
+      <label>検査員1<select data-k="inspectors.0" ${dis}>${nameOpts(data.inspectors[0])}</select></label>
+      <label>検査員2<select data-k="inspectors.1" ${dis}>${nameOpts(data.inspectors[1])}</select></label>
+    </div>
+    <label>記事（1行が報告書の1行。最大9行）<textarea data-k="note" ${dis}>${h(data.note)}</textarea></label>
+    <p class="muted">誤差は「(測定値−基準)÷スパン」の目安です。精度を超えると赤字になります。正式な値はExcelで計算されます。</p>`;
+  return html;
+}
+
+function updateDevs(d, data) {
+  document.querySelectorAll('[data-dev]').forEach(el => {
+    const [, k, key, i] = el.dataset.dev.split('.');
+    const ch = d.info.chs[k];
+    const p = ch && ch.points[i];
+    const v = parseFloat(data.ch[k][key][i]);
+    if (!p || isNaN(v) || p.expect == null || !ch.span) { el.textContent = ''; el.className = 'dev'; return; }
+    const dev = (v - p.expect) / ch.span * 100;
+    el.textContent = (dev > 0 ? '+' : '') + dev.toFixed(2) + '%';
+    el.className = 'dev' + (d.info.accuracy != null && Math.abs(dev) > d.info.accuracy + 1e-9 ? ' ng' : '');
+  });
+}
+
+// ---- 操作 ----
+async function startWork(reopen) {
+  const id = view.id;
+  try {
+    const j = await api('start', { id, reopen: !!reopen });
+    updateDevice(j.device);
+    const dr = drafts[id];
+    if (dr) {
+      dr.blocked = null;  // 端末に残っている入力を優先して続ける
+      if (dr.pending) scheduleSync(500);
+    } else {
+      drafts[id] = { data: normalize(j.device, j.device.data), rev: 0, pending: false };
+    }
+    saveDrafts();
+  } catch (e) {
+    alert(e.code === 'offline' ? '作業開始（ロック）には電波が必要です。電波のある場所で押してください。' : e.message);
+    if (e.code === 'locked' || e.code === 'done') await refresh(true);
+  }
+  render();
+}
+
+async function releaseWork() {
+  if (!confirm('作業をやめてロックを解除します。入力済みの値はサーバーに保存され、他の人も入力できるようになります。')) return;
+  const id = view.id;
+  try {
+    const dr = drafts[id];
+    if (dr && dr.pending) await api('save', { id, data: dr.data, finish: false });
+    const j = await api('release', { id });
+    updateDevice(j.device);
+    delete drafts[id];
+    saveDrafts();
+    view.screen = 'list';
+  } catch (e) {
+    alert(e.code === 'offline' ? 'ロック解除には電波が必要です。' : e.message);
+  }
+  render();
+}
+
+async function finishWork() {
+  const d = getDev(view.id);
+  const dr = drafts[view.id];
+  const blanks = countBlanks(d, dr.data);
+  if (blanks && !confirm(`未入力の測定値が ${blanks} か所あります。このまま完了にしますか？`)) return;
+  if (!blanks && !confirm('完了にして送信します。よろしいですか？')) return;
+  dr.finish = true;
+  touchDraft(view.id);
+  await sync();
+  alert(drafts[view.id] ? 'この端末に保存しました。電波が戻ると自動で送信されます。' : '送信しました。');
+  view.screen = 'list';
+  render();
+}
+
+// ---- イベント ----
+document.addEventListener('click', async e => {
+  const b = e.target.closest('[data-act]');
+  if (!b) return;
+  const act = b.dataset.act;
+  if (act === 'back') { view.screen = 'list'; render(); refresh(true); }
+  else if (act === 'sync') { await sync(); if (cfg && cfg.name) await refresh(); }
+  else if (act === 'connect') {
+    const key = $('#s-key').value.trim();
+    try {
+      const j = await api('hello', { key });
+      cfg = { key, name: '' };
+      names = j.names;
+      store.set('names', names);
+      renderNames();
+    } catch (err) { alert(err.message); }
+  }
+  else if (act === 'pickname') { cfg.name = b.dataset.name; store.set('cfg', cfg); await refresh(true); render(); }
+  else if (act === 'logout') {
+    if (Object.values(drafts).some(d => d.pending)) return alert('未送信のデータがあります。送信してから変更してください。');
+    cfg.name = ''; store.set('cfg', cfg); render();
+  }
+  else if (act === 'filter') { view.filter = b.dataset.f; store.set('filter', view.filter); render(); }
+  else if (act === 'refresh') refresh();
+  else if (act === 'open') { view.screen = 'detail'; view.id = b.dataset.id; render(); window.scrollTo(0, 0); }
+  else if (act === 'start') startWork(false);
+  else if (act === 'reopen') { if (confirm('完了済みの機器を修正のため再開します。よろしいですか？')) startWork(true); }
+  else if (act === 'release') releaseWork();
+  else if (act === 'finish') finishWork();
+});
+
+function onEdit(e) {
+  const t = e.target;
+  if (t.id === 'q') { view.q = t.value; renderList(); const q = $('#q'); q.focus(); q.setSelectionRange(q.value.length, q.value.length); return; }
+  const k = t.dataset.k;
+  if (!k || view.screen !== 'detail') return;
+  const dr = drafts[view.id];
+  if (!dr || t.disabled) return;
+  setPath(dr.data, k, t.type === 'checkbox' ? t.checked : t.value);
+  touchDraft(view.id);
+  if (t.type === 'checkbox') renderDetail();
+  else if (t.dataset.k.startsWith('ch.')) updateDevs(getDev(view.id), dr.data);
+}
+document.addEventListener('input', onEdit);
+document.addEventListener('change', e => { if (e.target.tagName === 'SELECT' || e.target.type === 'checkbox' || e.target.type === 'date') onEdit(e); });
+
+// 数値キーボードにはマイナスが無いため、キーボードの上に「±」「前へ」「次へ」のバーを出す
+const kb = $('#kbbar');
+let activeNum = null;
+function placeKb() {
+  const vv = window.visualViewport;
+  const top = vv ? vv.offsetTop + vv.height - kb.offsetHeight : window.innerHeight - kb.offsetHeight;
+  kb.style.top = top + 'px';
+}
+document.addEventListener('focusin', e => {
+  if (e.target.matches('input.num')) { activeNum = e.target; kb.hidden = false; placeKb(); }
+});
+document.addEventListener('focusout', () => setTimeout(() => {
+  if (!document.activeElement || !document.activeElement.matches('input.num')) { kb.hidden = true; activeNum = null; }
+}, 100));
+if (window.visualViewport) {
+  visualViewport.addEventListener('resize', placeKb);
+  visualViewport.addEventListener('scroll', placeKb);
+}
+kb.addEventListener('pointerdown', e => e.preventDefault());  // 押してもキーボードを閉じない
+kb.addEventListener('click', e => {
+  const b = e.target.closest('[data-kb]');
+  if (!b || !activeNum) return;
+  const inputs = [...document.querySelectorAll('input.num:not(:disabled)')];
+  const idx = inputs.indexOf(activeNum);
+  if (b.dataset.kb === 'sign') {
+    const v = activeNum.value.trim();
+    activeNum.value = v.startsWith('-') ? v.slice(1) : '-' + v;
+    activeNum.dispatchEvent(new Event('input', { bubbles: true }));
+  } else if (b.dataset.kb === 'next' && inputs[idx + 1]) inputs[idx + 1].focus();
+  else if (b.dataset.kb === 'prev' && inputs[idx - 1]) inputs[idx - 1].focus();
+  else if (b.dataset.kb === 'done') activeNum.blur();
+});
+
+render();
+if (cfg && cfg.name) { sync(); refresh(true); }
+</script>
+</body>
+</html>
