@@ -1,0 +1,611 @@
+<title>投資×AI note工房</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@700;800&family=BIZ+UDPGothic:wght@400;700&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+/* レイアウト: 上部に固定タブ、1カラムのスマホ用ノート。見出しは明朝、本文はUDゴシック */
+:root {
+  --paper: #f4f6f2; --card: #ffffff; --ink: #17211c; --sub: #5a675f; --line: #d6ddd6;
+  --accent: #0d6a58; --accent-ink: #ffffff; --accent-soft: #e2f0eb;
+  --warn: #9a5b06; --warn-soft: #fbf0dc; --ng: #b3261e; --ng-soft: #fbe7e5;
+  --f-display: "Shippori Mincho", "Hiragino Mincho ProN", "Yu Mincho", serif;
+  --f-body: "BIZ UDPGothic", -apple-system, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #111815; --card: #19221e; --ink: #e5ece7; --sub: #9aa89f; --line: #2d3a33;
+    --accent: #4fc0a6; --accent-ink: #0b1411; --accent-soft: #1b3029;
+    --warn: #e2a64a; --warn-soft: #2e2516; --ng: #f08a80; --ng-soft: #33201e; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #111815; --card: #19221e; --ink: #e5ece7; --sub: #9aa89f; --line: #2d3a33;
+  --accent: #4fc0a6; --accent-ink: #0b1411; --accent-soft: #1b3029;
+  --warn: #e2a64a; --warn-soft: #2e2516; --ng: #f08a80; --ng-soft: #33201e; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--paper); color: var(--ink); font: 15px/1.75 var(--f-body); -webkit-text-size-adjust: 100%; }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--paper); }
+button, input, select, textarea { font: inherit; color: inherit; }
+a { color: var(--accent); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+header.top { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--paper); border-bottom: 1px solid var(--line); }
+.top-in { max-width: 720px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 12px 0; }
+.brand { display: flex; align-items: baseline; gap: 10px; }
+.brand h1 { font: 800 21px/1.3 var(--f-display); margin: 0; letter-spacing: .02em; }
+.brand span { font-size: 12px; color: var(--sub); }
+nav.tabs { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; margin-top: 8px; }
+nav.tabs::-webkit-scrollbar { display: none; }
+nav.tabs a { flex: none; text-decoration: none; color: var(--sub); font-size: 14px; font-weight: 700; padding: 8px 12px 10px; border-bottom: 3px solid transparent; }
+nav.tabs a[aria-current="page"] { color: var(--ink); border-bottom-color: var(--accent); }
+
+main { max-width: 720px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 18px 56px; }
+section.view { display: grid; gap: 16px; }
+h2 { font: 700 22px/1.45 var(--f-display); margin: 4px 0 0; text-wrap: balance; }
+h3 { font: 700 17px/1.5 var(--f-display); margin: 0; text-wrap: balance; }
+p { margin: 0; }
+.lead { color: var(--sub); }
+.eyebrow { font-size: 11px; letter-spacing: .12em; color: var(--accent); font-weight: 700; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: grid; gap: 10px; min-width: 0; }
+.note { border-radius: 8px; padding: 12px 14px; font-size: 14px; display: grid; gap: 6px; }
+.note.warn { background: var(--warn-soft); border-left: 3px solid var(--warn); }
+.note.ng { background: var(--ng-soft); border-left: 3px solid var(--ng); }
+.note.good { background: var(--accent-soft); border-left: 3px solid var(--accent); }
+ul, ol { margin: 0; padding-left: 1.3em; display: grid; gap: 4px; }
+.num { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
+
+/* ロードマップ */
+ol.road { list-style: none; padding: 0; gap: 0; }
+ol.road > li { display: grid; grid-template-columns: 44px 1fr; gap: 12px; padding-bottom: 18px; position: relative; }
+ol.road > li::before { content: ""; position: absolute; left: 21px; top: 40px; bottom: 0; width: 2px; background: var(--line); }
+ol.road > li:last-child::before { display: none; }
+.step { width: 44px; height: 44px; border-radius: 50%; border: 2px solid var(--accent); display: grid; place-items: center; font: 500 13px var(--f-mono); color: var(--accent); background: var(--card); }
+.road .body { display: grid; gap: 6px; min-width: 0; padding-top: 2px; }
+.road .when { font-size: 12px; color: var(--sub); }
+
+/* ルーティン */
+.routine { display: grid; gap: 0; }
+.routine div { display: grid; grid-template-columns: 64px 1fr; gap: 10px; padding: 8px 0; border-top: 1px dashed var(--line); }
+.routine div:first-child { border-top: 0; }
+.routine b { font-family: var(--f-mono); font-weight: 500; color: var(--accent); font-variant-numeric: tabular-nums; }
+
+/* フォーム */
+label { display: grid; gap: 4px; font-size: 13px; color: var(--sub); font-weight: 700; }
+input, select, textarea { font-size: 16px; font-weight: 400; color: var(--ink); background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; width: 100%; min-width: 0; }
+textarea { min-height: 110px; resize: vertical; line-height: 1.6; }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { border: 1px solid var(--line); background: var(--card); border-radius: 99px; padding: 6px 12px; font-size: 13px; cursor: pointer; }
+.chip[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border-radius: 10px; padding: 13px 16px; font-weight: 700; border: 1px solid var(--line); background: var(--card); cursor: pointer; text-decoration: none; color: var(--ink); }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.btns .wide { grid-column: 1 / -1; }
+pre.out { margin: 0; white-space: pre-wrap; word-break: break-word; font: 13px/1.65 var(--f-body); background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 12px; max-height: 340px; overflow: auto; }
+.toast { font-size: 13px; color: var(--accent); min-height: 1.4em; text-align: center; }
+
+/* ネタ帳 */
+.idea-group { display: grid; gap: 8px; }
+.idea { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; text-align: left; width: 100%; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px; cursor: pointer; }
+.idea small { display: block; color: var(--sub); font-size: 12px; }
+.idea .go { font-size: 12px; color: var(--accent); font-weight: 700; white-space: nowrap; }
+.tag { display: inline-block; font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 99px; margin-right: 6px; vertical-align: 1px; }
+.tag.free { background: var(--accent-soft); color: var(--accent); }
+.tag.paid { background: var(--warn-soft); color: var(--warn); }
+
+/* 表 */
+.tbl { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: 12px; color: var(--sub); font-weight: 700; }
+td.r { text-align: right; font-family: var(--f-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* チェックリスト */
+.checks { display: grid; gap: 2px; }
+.checks label { display: grid; grid-template-columns: 24px 1fr; gap: 10px; align-items: start; font-size: 15px; color: var(--ink); font-weight: 400; padding: 8px 0; border-bottom: 1px dashed var(--line); cursor: pointer; }
+.checks input { width: 20px; height: 20px; margin: 3px 0 0; padding: 0; accent-color: var(--accent); }
+.foot { font-size: 12px; color: var(--sub); }
+@media (prefers-reduced-motion: no-preference) { .btn, .chip, .idea { transition: background-color .15s, border-color .15s; } }
+</style>
+
+<header class="top">
+  <div class="top-in">
+    <div class="brand"><h1>投資×AI note工房</h1><span>スマホだけで書く・売る</span></div>
+    <nav class="tabs" aria-label="メニュー">
+      <a href="#start">はじめ方</a>
+      <a href="#maker">記事メーカー</a>
+      <a href="#ideas">ネタ帳</a>
+      <a href="#money">収益化</a>
+      <a href="#rules">注意点</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+<!-- ===== はじめ方 ===== -->
+<section class="view" id="v-start">
+  <div>
+    <div class="eyebrow">ROADMAP</div>
+    <h2>30日で「有料記事1本目」まで</h2>
+  </div>
+  <p class="lead">AIに下書きを作らせ、あなたは体験を足して仕上げるだけ。1日15分、スマホで完結する流れです。</p>
+
+  <div class="note good">
+    <b>成功している人の共通点（先に結論）</b>
+    <ul>
+      <li><b>一次情報を入れる。</b>AIに丸投げした記事は誰でも作れるので売れません。「自分がやってみた結果・失敗・画面」が商品になります。</li>
+      <li><b>無料で信頼を貯めてから有料。</b>最初の10〜20本は無料で出します。</li>
+      <li><b>続ける。</b>最初の1〜3か月は数字がほぼ動きません。30本が最初の壁です。</li>
+      <li><b>noteの外から人を呼ぶ。</b>X（旧Twitter）で毎回告知すると伸びが変わります。</li>
+    </ul>
+  </div>
+
+  <ol class="road">
+    <li><div class="step">1</div><div class="body">
+      <h3>アプリを入れる</h3><span class="when">初日・10分</span>
+      <p>「note」アプリと、AIアプリ（「Claude」か「ChatGPT」）を入れて登録します。noteはメールかGoogle/Appleアカウントで登録できます。</p>
+    </div></li>
+    <li><div class="step">2</div><div class="body">
+      <h3>プロフィールを作る</h3><span class="when">初日・20分</span>
+      <p>名前は覚えやすく、何の人か分かるものに。例：「AIで投資を時短する会社員｜○○」。自己紹介文は記事メーカーの「プロフィール文」で作れます。</p>
+    </div></li>
+    <li><div class="step">3</div><div class="body">
+      <h3>立ち位置を決める</h3><span class="when">初日</span>
+      <p>先生ではなく<b>「AIを投資に使ってみる実験の記録係」</b>になります。素人でも書けて、読者は「同じ目線の体験談」を求めています。</p>
+    </div></li>
+    <li><div class="step">4</div><div class="body">
+      <h3>自己紹介記事を出す</h3><span class="when">1日目</span>
+      <p>最初の1本は自己紹介。なぜ始めたか、何を発信するか、投資歴（初心者でOK）を書きます。</p>
+    </div></li>
+    <li><div class="step">5</div><div class="body">
+      <h3>無料記事を10本以上</h3><span class="when">2〜28日目・2日に1本</span>
+      <p>ネタ帳から選んで書きます。毎回「実際にAIに聞いた質問と答え」を入れるのがコツ。スキやコメントが付いた記事のテーマを覚えておきます。</p>
+    </div></li>
+    <li><div class="step">6</div><div class="body">
+      <h3>有料記事1本目</h3><span class="when">30日目前後・300〜500円</span>
+      <p>反応の良かった無料記事の「完全版」を有料にします。中身は「そのまま使えるプロンプト集＋手順」が売れやすい形です。</p>
+    </div></li>
+    <li><div class="step">7</div><div class="body">
+      <h3>マガジン・メンバーシップへ</h3><span class="when">2〜3か月目以降</span>
+      <p>有料記事が3本以上たまったらマガジンにまとめて販売。毎月の収入にしたい場合は定期購読やメンバーシップへ広げます。</p>
+    </div></li>
+  </ol>
+
+  <div class="card">
+    <h3>毎日の15分ルーティン</h3>
+    <div class="routine">
+      <div><b>2分</b><span>ネタ帳からテーマを1つ選ぶ</span></div>
+      <div><b>3分</b><span>記事メーカーに「やってみたことメモ」を書き、指示文をコピー</span></div>
+      <div><b>3分</b><span>ClaudeかChatGPTに貼り付けて下書きを作らせる</span></div>
+      <div><b>5分</b><span>下書きを読み、自分の言葉と体験を足す。数字は公式サイトで確認</span></div>
+      <div><b>2分</b><span>noteアプリに貼り付け、見出し画像・ハッシュタグを付けて公開。Xで告知</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>noteアプリでの投稿手順</h3>
+    <ol>
+      <li>下の「＋」（投稿）→「テキスト」を選ぶ</li>
+      <li>タイトルと本文を貼り付ける</li>
+      <li>「■」で始まる行をタップして選び、見出しに変える</li>
+      <li>見出し画像：画像アイコンから「みんなのフォトギャラリー」で無料画像を選べます</li>
+      <li>「公開に進む」→ ハッシュタグを3〜5個（例：#投資 #新NISA #生成AI #ChatGPT #投資初心者）</li>
+      <li>有料にする時は「有料」を選び、価格と有料エリアの開始位置を決める</li>
+      <li>「投稿する」</li>
+    </ol>
+    <p class="foot">アプリの画面は更新で変わることがあります。見当たらない時は note の公式ヘルプを見てください。</p>
+  </div>
+</section>
+
+<!-- ===== 記事メーカー ===== -->
+<section class="view" id="v-maker" hidden>
+  <div>
+    <div class="eyebrow">PROMPT MAKER</div>
+    <h2>AIへの指示文を作る</h2>
+  </div>
+  <p class="lead">選んで書いて、コピーしてAIアプリに貼るだけ。注意点（銘柄推奨しない・数字は要確認）は自動で入ります。</p>
+
+  <div class="card">
+    <label>作るもの</label>
+    <div class="chips" id="types" role="group" aria-label="作るもの"></div>
+
+    <label for="theme">テーマ
+      <input id="theme" type="text" placeholder="例：決算短信をAIで5分で読む方法">
+    </label>
+    <div class="row2">
+      <label for="reader">読者
+        <select id="reader">
+          <option>投資を始めたばかりの初心者</option>
+          <option>新NISAを始めた会社員</option>
+          <option>忙しくて調べる時間がない兼業投資家</option>
+          <option>AIは使ったことがない40〜60代</option>
+          <option>ある程度投資経験のある中級者</option>
+        </select>
+      </label>
+      <label for="length">文字数
+        <select id="length">
+          <option value="2000">約2,000字</option>
+          <option value="3000" selected>約3,000字</option>
+          <option value="5000">約5,000字</option>
+        </select>
+      </label>
+    </div>
+    <label for="memo">やってみたことメモ（あなたの体験・ここが一番大事）
+      <textarea id="memo" placeholder="例：Claudeにある会社の決算短信のPDFを読ませて『前年と比べて何が変わった？』と聞いた。売上と利益の増減は5秒で出た。でも1か所数字を読み違えていたので、会社のIRページで確認した。"></textarea>
+    </label>
+    <label for="price" id="priceWrap" hidden>価格（円）
+      <input id="price" type="number" inputmode="numeric" min="100" step="100" value="500">
+    </label>
+  </div>
+
+  <div class="card">
+    <h3>指示文</h3>
+    <pre class="out" id="out"></pre>
+    <div class="btns">
+      <button class="btn primary wide" id="copy" type="button">指示文をコピー</button>
+      <a class="btn" href="https://claude.ai/new" target="_blank" rel="noopener">Claudeを開く</a>
+      <a class="btn" href="https://chatgpt.com/" target="_blank" rel="noopener">ChatGPTを開く</a>
+    </div>
+    <div class="toast" id="toast" aria-live="polite"></div>
+    <p class="foot">AIアプリが入っていれば、リンクからアプリが開くこともあります。開かない時はアプリを自分で開いて貼り付けてください。</p>
+  </div>
+
+  <div class="card">
+    <h3>公開前チェック</h3>
+    <div class="checks" id="checks"></div>
+    <button class="btn" id="resetChecks" type="button">チェックを外す</button>
+  </div>
+</section>
+
+<!-- ===== ネタ帳 ===== -->
+<section class="view" id="v-ideas" hidden>
+  <div>
+    <div class="eyebrow">IDEA BANK</div>
+    <h2>ネタ帳 30本</h2>
+  </div>
+  <p class="lead">タップすると記事メーカーにテーマが入ります。<span class="tag free">無料</span>は集客用、<span class="tag paid">有料</span>は売る用の目安です。</p>
+  <div id="ideaList" class="view"></div>
+</section>
+
+<!-- ===== 収益化 ===== -->
+<section class="view" id="v-money" hidden>
+  <div>
+    <div class="eyebrow">MONETIZE</div>
+    <h2>noteでお金になる仕組み</h2>
+  </div>
+
+  <div class="card">
+    <h3>5つの稼ぎ方</h3>
+    <div class="tbl"><table>
+      <thead><tr><th>方法</th><th>内容</th><th>始める時期</th></tr></thead>
+      <tbody>
+        <tr><td><b>有料記事</b></td><td>1本ずつ販売。途中まで無料で読ませ、続きを有料に</td><td>1か月目〜</td></tr>
+        <tr><td><b>チップ</b></td><td>読者が記事に任意でお金を送れる機能</td><td>最初から</td></tr>
+        <tr><td><b>有料マガジン</b></td><td>有料記事をまとめて買い切りで販売</td><td>有料3本〜</td></tr>
+        <tr><td><b>定期購読・メンバーシップ</b></td><td>月額制。毎月の記事や限定コンテンツ</td><td>ファンがついてから</td></tr>
+        <tr><td><b>アフィリエイト</b></td><td>Amazonなどの紹介料。証券口座やAIサービスの紹介も</td><td>必ず「PR」表記</td></tr>
+      </tbody>
+    </table></div>
+    <p class="foot">手数料は「決済手数料＋noteの利用料」が引かれ、売上のおおよそ8割前後が手元に残る仕組みです。料率は変わることがあるので、note公式ヘルプの最新情報を確認してください。</p>
+  </div>
+
+  <div class="card">
+    <h3>現実的な目標</h3>
+    <div class="tbl"><table>
+      <thead><tr><th>段階</th><th>目安</th><th class="r">月の売上</th></tr></thead>
+      <tbody>
+        <tr><td>1〜2か月目</td><td>無料記事を積む。フォロワー50人</td><td class="r">0円</td></tr>
+        <tr><td>3か月目</td><td>500円の記事が月10本売れる</td><td class="r">5,000円</td></tr>
+        <tr><td>6か月目</td><td>有料記事5本＋マガジン。月30本売れる</td><td class="r">15,000円</td></tr>
+        <tr><td>1年目</td><td>月額500円のメンバー40人＋単品</td><td class="r">30,000円〜</td></tr>
+      </tbody>
+    </table></div>
+    <p class="foot">あくまで目安です。最初の売上が出るまで数か月かかるのが普通で、ここで辞める人が大半です。逆に言えば続けるだけで上位に入れます。</p>
+  </div>
+
+  <div class="card">
+    <h3>売れる有料記事の型</h3>
+    <ol>
+      <li><b>タイトル：</b>「誰が」「何を」「どうなる」＋数字。例「投資初心者がAIで決算を5分で読む｜コピペで使える質問テンプレ12個」</li>
+      <li><b>無料部分：</b>読者の悩み → この記事で得られること → 目次 → 中身の一部（1つ目のテンプレだけ見せる）</li>
+      <li><b>ここから有料</b></li>
+      <li><b>有料部分：</b>全手順、全プロンプト、実際の画面や結果、失敗しやすい点</li>
+      <li><b>最後：</b>免責文、次の記事やマガジンへの案内</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h3>価格の決め方</h3>
+    <ul>
+      <li>最初は <span class="num">300〜500</span> 円。売れたら少しずつ上げる</li>
+      <li>プロンプト集やテンプレなど「すぐ使える物」は <span class="num">980</span> 円前後でも売れやすい</li>
+      <li>マガジンは中の記事の合計より安くして「まとめ買いがお得」にする</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>伸ばすための小技</h3>
+    <ul>
+      <li>投稿は時間を揃える（通勤時間の朝7時台か、夜21時台）</li>
+      <li>他の投資・AI系のクリエイターの記事にスキやコメントをする</li>
+      <li>noteの「お題」企画（ハッシュタグ募集）に参加すると読まれやすい</li>
+      <li>X（旧Twitter）で記事の要点を3行＋リンクで告知。記事メーカーで告知文も作れます</li>
+      <li>反応の良かった記事は、後で中身を足して有料版にする</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ===== 注意点 ===== -->
+<section class="view" id="v-rules" hidden>
+  <div>
+    <div class="eyebrow">RULES</div>
+    <h2>投資ジャンルで必ず守ること</h2>
+  </div>
+  <p class="lead">投資の記事は法律の決まりがあるジャンルです。ここを守れば、素人でも安全に続けられます。</p>
+
+  <div class="note ng">
+    <b>やってはいけないこと</b>
+    <ul>
+      <li><b>「この銘柄を買うべき」「今が売り時」と有料で教える。</b>特定の株などの売買を助言してお金をもらうのは、金融商品取引法で「投資助言業」の登録が必要になる可能性があります。売るのは<b>「AIの使い方・調べ方」</b>にします。</li>
+      <li><b>「必ず儲かる」「元本保証」「月10万円確実」と書く。</b>法律やnoteの規約に触れる恐れがあり、信用も失います。</li>
+      <li><b>アフィリエイトを隠す。</b>2023年10月からステマ規制が始まっています。記事の冒頭に「PR」「この記事はアフィリエイトリンクを含みます」と書きます。</li>
+      <li><b>他人の有料記事やレポートをAIに要約させて載せる。</b>著作権の問題になります。</li>
+      <li><b>非公式ツールでnoteに自動投稿する。</b>規約違反でアカウント停止のリスクがあります。自動化は「下書き作り」までにしましょう。</li>
+    </ul>
+  </div>
+
+  <div class="note warn">
+    <b>AIの間違いに注意</b>
+    <p>AIは株価、決算の数字、税制や制度の細かい条件をもっともらしく間違えます。記事メーカーの指示文は数字に【要確認】を付けさせるので、公開前に次の公式情報で確認してください。</p>
+    <ul>
+      <li>会社の決算：各社のIRページ、EDINET、TDnet（適時開示）</li>
+      <li>新NISAや税金：金融庁、国税庁</li>
+      <li>AIサービスの料金・機能：各社の公式サイト</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>免責文（記事の最後にコピペ）</h3>
+    <pre class="out" id="disclaimer">本記事は筆者の個人的な経験と学習記録であり、特定の金融商品の売買を推奨するものではありません。記載の情報は執筆時点のもので、正確性・完全性を保証するものではありません。AIの回答には誤りが含まれることがあります。投資の最終判断はご自身の責任でお願いいたします。</pre>
+    <button class="btn" id="copyDisc" type="button">免責文をコピー</button>
+  </div>
+
+  <div class="card">
+    <h3>税金のこと</h3>
+    <p>会社員の場合、noteなどの副業の所得（売上から経費を引いた額）が年間20万円を超えると確定申告が必要です。売上はnoteの管理画面で確認できるので、年に一度見ておきましょう。</p>
+  </div>
+</section>
+
+</main>
+
+<script>
+(function () {
+  // ---------- タブ（#start などで切り替え） ----------
+  const views = ['start', 'maker', 'ideas', 'money', 'rules'];
+  function show() {
+    const cur = views.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'start';
+    views.forEach(v => { document.getElementById('v-' + v).hidden = v !== cur; });
+    document.querySelectorAll('nav.tabs a').forEach(a => {
+      if (a.getAttribute('href') === '#' + cur) a.setAttribute('aria-current', 'page');
+      else a.removeAttribute('aria-current');
+    });
+  }
+  window.addEventListener('hashchange', () => { show(); window.scrollTo(0, 0); });
+  show();
+
+  // ---------- 保存（この端末のブラウザだけ） ----------
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem('noteKobo.' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
+    set(k, v) { try { localStorage.setItem('noteKobo.' + k, JSON.stringify(v)); } catch (e) {} }
+  };
+
+  // ---------- 記事メーカー ----------
+  const RULES = [
+    '特定の銘柄・商品の売買推奨や、売買タイミングの助言は書かない（銘柄名はAIの使い方を説明する例としてのみ使い、「例として」と明記する）',
+    '将来の値動きを断定しない。「必ず」「絶対」「確実に儲かる」などの表現を使わない',
+    '株価・決算の数値・税制や制度の条件・AIサービスの料金など、事実確認が必要な箇所には【要確認】と付ける',
+    '「やってみたことメモ」にない体験を、私の体験として作らない。足りない所は【ここにあなたの体験を追加】と書いて空けておく'
+  ];
+  const STYLE = [
+    'です・ます調。一文は60字以内。専門用語には一言で説明を添える',
+    'スマホで読むので、2〜3文ごとに空行を入れる',
+    '見出しの行は「■」で始める（noteアプリで見出しに変えやすくするため）',
+    'Markdownの記号（#、**、表）は使わない。プロンプト例は「」で囲むか、行頭に「▶」を付ける',
+    'AIっぽい決まり文句（「いかがでしたか」「〜について解説します」「結論から言うと」の多用）を避け、友人に話すような自然な文章にする'
+  ];
+  const TYPES = {
+    free: { label: '無料記事', build: c => [
+      `あなたは、noteで「投資×AI活用」の記事を書いている経験豊富な編集者兼ライターです。以下の条件で、無料公開するnote記事を書いてください。`,
+      `■テーマ：${c.theme}`, `■読者：${c.reader}`, `■文字数：${c.length}字程度`,
+      `■やってみたことメモ（本文の中心にする）\n${c.memo}`,
+      `■構成\n1. タイトル案を3つ（32字以内、数字と読者の得を入れる）\n2. リード文：読者の悩みに共感 → この記事で分かること\n3. 本文：見出し3〜5個。実際にAIに入力した質問文（プロンプト）と、その答えの要点を必ず入れる\n4. つまずいた所・AIが間違えた所と、その確認方法\n5. まとめ（3行）\n6. 次回予告と、フォローのお願いを1〜2文\n7. 最後に免責文`,
+      `■守ること\n${RULES.map(r => '・' + r).join('\n')}`,
+      `■文体\n${STYLE.map(r => '・' + r).join('\n')}`,
+      `最後に、この記事に合うハッシュタグを5個と、X（旧Twitter）用の140字以内の告知文を付けてください。`
+    ]},
+    paid: { label: '有料記事', build: c => [
+      `あなたは、noteで有料記事を多数販売している「投資×AI活用」ジャンルの編集者兼ライターです。以下の条件で、${c.price}円で販売するnote記事を書いてください。`,
+      `■テーマ：${c.theme}`, `■読者：${c.reader}`, `■文字数：有料部分も含めて${c.length}字程度`,
+      `■やってみたことメモ（本文の中心にする）\n${c.memo}`,
+      `■構成\n【無料部分】\n1. タイトル案を3つ（「誰が・何を・どうなる」＋数字。32字以内）\n2. 読者の悩みに共感するリード\n3. この記事で手に入るもの（箇条書き3〜5個）\n4. 目次\n5. 中身の一部（テンプレやプロンプトを1つだけ全文見せる）\n6. 「この先は有料です。〇〇が全部手に入ります」という案内\n\n―――――― ここから有料 ――――――\n\n【有料部分】\n7. 手順を最初から最後まで、スマホで真似できる細かさで\n8. そのままコピーして使えるプロンプトを5〜12個（用途の説明つき）\n9. AIの答えが間違いやすい所と、公式情報での確かめ方\n10. よくある質問を3つ\n11. まとめと、次に読む記事の案内\n12. 免責文`,
+      `■守ること\n${RULES.map(r => '・' + r).join('\n')}\n・有料部分には「AIの使い方・調べ方・考え方の型」を書く。「この銘柄が儲かる」といった情報は売り物にしない`,
+      `■文体\n${STYLE.map(r => '・' + r).join('\n')}`,
+      `最後に、ハッシュタグ5個と、有料記事を告知するX（旧Twitter）用の140字以内の文を付けてください。`
+    ]},
+    intro: { label: '自己紹介', build: c => [
+      `noteの最初の1本となる自己紹介記事を、約1,500字で書いてください。`,
+      `■発信テーマ：投資にAI（ClaudeやChatGPTなど）を活用する方法を、実際に試しながら記録する`,
+      `■私について（このメモにないことは作らず【要追加】と書く）\n${c.memo}`,
+      `■構成\n1. タイトル案3つ\n2. はじめまして＋どんな人か\n3. noteを始めた理由\n4. このnoteで発信すること（3つ）\n5. こんな人に読んでほしい\n6. 今後の予定とフォローのお願い`,
+      `■文体\n${STYLE.map(r => '・' + r).join('\n')}\n・先生ではなく「一緒に試していく仲間」という目線で、親しみやすく`,
+      `あわせて、noteのプロフィール欄用の自己紹介文（140字以内）を3パターン作ってください。`
+    ]},
+    titles: { label: 'タイトル案', build: c => [
+      `noteの「投資×AI活用」ジャンルで、次のテーマのタイトル案を10個作ってください。`,
+      `■テーマ：${c.theme}`, `■読者：${c.reader}`,
+      `■条件\n・32字以内\n・「誰が」「何を」「どうなる」が分かる\n・半分以上に具体的な数字を入れる\n・「必ず儲かる」など誇大な表現は使わない`,
+      `最後に、クリックされやすい順に上位3つを選び、理由を一言ずつ書いてください。`
+    ]},
+    x: { label: 'X告知文', build: c => [
+      `noteの新しい記事をX（旧Twitter）で告知します。140字以内の告知文を5パターン作ってください。`,
+      `■記事のテーマ：${c.theme}`, `■読者：${c.reader}`,
+      `■記事の要点・体験\n${c.memo}`,
+      `■条件\n・1行目で読者の悩みか意外な結果を書いて手を止めさせる\n・記事を読むと何が分かるかを1つ書く\n・最後に「▼記事はこちら」\n・ハッシュタグは2個まで\n・誇大な表現や、銘柄の売買を勧める表現は使わない`
+    ]},
+    image: { label: '見出し画像', build: c => [
+      `noteの見出し画像（横長 1280×670px）を画像生成AIで作ります。次の記事に合う画像の指示文（プロンプト）を3パターン、日本語で作ってください。`,
+      `■記事のテーマ：${c.theme}`,
+      `■条件\n・スマホの小さい表示でも伝わるシンプルな構図\n・文字は入れない（タイトルはnote側で表示されるため）\n・株価チャートやお金のアイコンを使いすぎない、落ち着いた雰囲気\n・実在の企業ロゴや人物は使わない`
+    ]},
+    rewrite: { label: 'AIっぽさを消す', build: c => [
+      `次の下書きを、私が書いた自然な文章に直してください。`,
+      `■直し方\n・AIっぽい決まり文句（「いかがでしたか」「〜と言えるでしょう」「結論から言うと」の多用、毎回同じ締め方）を消す\n・同じ語尾が3回続かないようにする\n・内容と事実は変えない。数字や体験を足さない\n・投資の売買を勧める表現や断定的な表現があれば、指摘して直す\n・直した箇所のうち大きいものを最後に3つ説明する`,
+      `■下書き（ここに貼る）\n${c.memo}`
+    ]}
+  };
+
+  const $ = id => document.getElementById(id);
+  let type = store.get('type', 'free');
+  if (!TYPES[type]) type = 'free';
+
+  const typesEl = $('types');
+  Object.entries(TYPES).forEach(([k, t]) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'chip'; b.textContent = t.label; b.dataset.k = k;
+    b.addEventListener('click', () => { type = k; store.set('type', k); render(); });
+    typesEl.appendChild(b);
+  });
+
+  const SAMPLE = {
+    theme: '決算短信をAIで5分で読む方法',
+    memo: 'Claudeにある会社の決算短信のPDFを読ませて「前年と比べて何が変わった？3行で」と聞いた。売上と利益の増減は数秒で出た。でも営業利益の数字を1か所読み違えていたので、会社のIRページで確認して気づいた。次は「数字は表のどこから取ったか書いて」と付けたら間違いが減った。'
+  };
+  const saved = store.get('form', null);
+  $('theme').value = saved ? saved.theme : SAMPLE.theme;
+  $('memo').value = saved ? saved.memo : SAMPLE.memo;
+  if (saved) { $('reader').value = saved.reader; $('length').value = saved.length; $('price').value = saved.price; }
+
+  function render() {
+    typesEl.querySelectorAll('.chip').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.k === type)));
+    $('priceWrap').hidden = type !== 'paid';
+    const memoLabel = type === 'rewrite' ? '下書き（AIが作った文章を貼る）' : type === 'intro' ? 'あなたについてのメモ（仕事・投資歴・始めた理由など）' : 'やってみたことメモ（あなたの体験・ここが一番大事）';
+    $('memo').previousSibling.textContent = memoLabel;
+    const c = {
+      theme: $('theme').value.trim() || '（テーマを入力）',
+      reader: $('reader').value,
+      length: $('length').value,
+      memo: $('memo').value.trim() || '（メモなし：体験が必要な所は【ここにあなたの体験を追加】と書いて空けておく）',
+      price: $('price').value || '500'
+    };
+    $('out').textContent = TYPES[type].build(c).join('\n\n');
+    store.set('form', { theme: $('theme').value, memo: $('memo').value, reader: c.reader, length: c.length, price: $('price').value });
+  }
+  ['theme', 'reader', 'length', 'memo', 'price'].forEach(id => $(id).addEventListener('input', render));
+
+  function copyText(text, msgEl) {
+    const done = ok => { if (msgEl) { msgEl.textContent = ok ? 'コピーしました。AIアプリに貼り付けてください' : 'コピーできませんでした。文章を長押しして選択してください'; setTimeout(() => { msgEl.textContent = ''; }, 3500); } };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(() => done(true), () => done(false));
+    } else done(false);
+  }
+  $('copy').addEventListener('click', () => copyText($('out').textContent, $('toast')));
+  $('copyDisc').addEventListener('click', e => { copyText($('disclaimer').textContent, null); e.target.textContent = 'コピーしました'; setTimeout(() => { e.target.textContent = '免責文をコピー'; }, 2500); });
+
+  // ---------- 公開前チェック ----------
+  const CHECKS = [
+    '自分の体験（やったこと・結果・失敗）を1つ以上入れた',
+    '【要確認】の数字を公式サイトで確かめて、印を消した',
+    '銘柄の売買を勧める文、「必ず」「確実」などの断定がない',
+    '最後に免責文を入れた',
+    '見出し画像を付けた',
+    'ハッシュタグを3〜5個付けた',
+    'アフィリエイトリンクがあるなら冒頭に「PR」と書いた',
+    '公開後、Xで告知した'
+  ];
+  const checksEl = $('checks');
+  let checked = store.get('checks', []);
+  CHECKS.forEach((t, i) => {
+    const l = document.createElement('label');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.id = 'chk' + i; cb.checked = checked.includes(i);
+    cb.addEventListener('change', () => {
+      checked = CHECKS.map((_, j) => j).filter(j => $('chk' + j).checked);
+      store.set('checks', checked);
+    });
+    l.appendChild(cb); l.appendChild(document.createTextNode(t));
+    checksEl.appendChild(l);
+  });
+  $('resetChecks').addEventListener('click', () => {
+    CHECKS.forEach((_, i) => { $('chk' + i).checked = false; });
+    checked = []; store.set('checks', checked);
+  });
+
+  // ---------- ネタ帳 ----------
+  const IDEAS = [
+    ['AIで情報収集を時短する', [
+      ['free', 'ClaudeとChatGPTに同じ投資の質問をして比べてみた', '答えの違いと、使い分け'],
+      ['free', '毎朝5分、AIに経済ニュースを要約させる習慣', '使っている質問文をそのまま公開'],
+      ['free', 'AIに「わからない用語」を中学生向けに説明させるコツ', 'PER・PBR・配当利回りで実験'],
+      ['paid', '投資の調べ物に使えるAIプロンプト集30選', 'コピペで使える。売れ筋の形'],
+      ['free', 'AIの答えをうのみにしないための3つの確認方法', '間違えた実例つき']
+    ]],
+    ['決算・企業を調べる', [
+      ['free', '決算短信のPDFをAIに読ませて要点を3行にする', '最初の1本にちょうどいい'],
+      ['paid', '初心者がAIで決算を5分で読む完全手順＋質問テンプレ12個', '無料版の反応が良ければ'],
+      ['free', '有価証券報告書の「事業等のリスク」をAIに整理させた', 'EDINETの使い方も'],
+      ['free', '同じ業界の2社をAIに比べさせたら見えたこと', '銘柄は例として扱う'],
+      ['paid', 'AIと一緒に作る「企業チェックシート」テンプレ', 'スプレッドシート付き']
+    ]],
+    ['新NISA・資産設計', [
+      ['free', '新NISAの基本をAIに質問して整理した', '数字は金融庁サイトで確認'],
+      ['free', 'AIに家計を見せて毎月の積立額を一緒に考えた', '自分の数字はぼかしてOK'],
+      ['paid', 'AIと作る「自分だけの資産運用ルール」作成ガイド', 'ワークシート形式'],
+      ['free', 'つみたて投資のシミュレーションをAIで作ってみた', '計算はAIに任せきらない'],
+      ['free', '暴落した日にAIに相談したら落ち着けた話', '感情の記録は読まれやすい']
+    ]],
+    ['投資日記・習慣化', [
+      ['free', 'AIに投資日記の振り返りをしてもらう方法', '毎月書けるシリーズになる'],
+      ['free', '1か月AIを投資に使ってみた正直な感想', '節目ごとに書ける'],
+      ['paid', 'AIで作る投資日記テンプレと、月1回の振り返り質問集', '定期購読の入口に'],
+      ['free', '投資の失敗をAIと一緒に分析してみた', '失敗談は強い'],
+      ['free', '投資の本をAIと読む：要約ではなく質問する読み方', '著作権に注意して自分の言葉で']
+    ]],
+    ['AIツール紹介・比較', [
+      ['free', 'スマホだけで使える投資向けAIアプリの比べ方', '料金は公式で確認'],
+      ['free', 'ChatGPTとClaudeの無料版でどこまでできるか', '初心者に需要が大きい'],
+      ['paid', 'AIを使った「投資の調べ物」スマホ完結マニュアル', 'このnoteの看板商品に'],
+      ['free', 'AIに画像（チャートのスクショ）を見せて説明させた', '予想ではなく読み方の練習'],
+      ['free', '音声入力でAIに質問すると調べ物がもっと楽になる', '通勤中にできる']
+    ]],
+    ['考え方・注意点', [
+      ['free', 'AIが投資で教えてくれないこと・教えるべきでないこと', '信頼が上がる記事'],
+      ['free', '「AIで必ず儲かる」系の情報に気をつけたい理由', '読者を守る立場をとる'],
+      ['free', 'noteで投資×AIを発信して1か月の数字を公開', '実績公開は伸びやすい'],
+      ['paid', '投資初心者のためのAI活用ロードマップ（3か月分）', 'マガジン化しやすい'],
+      ['free', 'AIに聞く前に決めておきたい「自分の投資の目的」', '初心者の共感を得やすい']
+    ]]
+  ];
+  const list = $('ideaList');
+  IDEAS.forEach(([group, items]) => {
+    const g = document.createElement('div'); g.className = 'idea-group';
+    const h = document.createElement('h3'); h.textContent = group; g.appendChild(h);
+    items.forEach(([kind, title, hint]) => {
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'idea';
+      b.innerHTML = '<span><span class="tag ' + kind + '">' + (kind === 'paid' ? '有料' : '無料') + '</span><span class="t"></span><small></small></span><span class="go">書く →</span>';
+      b.querySelector('.t').textContent = title;
+      b.querySelector('small').textContent = hint;
+      b.addEventListener('click', () => {
+        $('theme').value = title; type = kind; store.set('type', kind); render();
+        location.hash = 'maker';
+      });
+      g.appendChild(b);
+    });
+    list.appendChild(g);
+  });
+
+  render();
+})();
+</script>
