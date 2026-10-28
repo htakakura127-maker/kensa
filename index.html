@@ -172,9 +172,11 @@ async function api(action, body, conn) {
 }
 
 // 設定コード「KENSA1:<base64>」を { api, key } に戻す。URLだけを貼った場合はそのまま使う
+// チャット経由のコピーで混ざりやすい改行・空白・見えない文字・全角コロン・前後の文章は無視する
 function parseSetupCode(raw) {
-  const m = raw.match(/^KENSA1:([A-Za-z0-9_-]+=*)$/);
-  if (!m) return { api: raw, key: '' };
+  const s = raw.replace(/[\s ​-‍⁠　﻿]/g, '');
+  const m = s.match(/KENSA1[:：]([A-Za-z0-9_\-+/]+=*)/i);
+  if (!m) return { api: s, key: '' };
   try {
     const o = JSON.parse(atob(m[1].replace(/-/g, '+').replace(/_/g, '/')));
     return { api: o.u, key: o.k };
@@ -638,10 +640,13 @@ document.addEventListener('click', async e => {
   if (act === 'back') { view.screen = 'list'; render(); refresh(true); }
   else if (act === 'sync') { await sync(); if (ready()) await refresh(); }
   else if (act === 'connect') {
-    const parsed = parseSetupCode($('#s-code').value.trim());
-    if (!parsed) return alert('設定コードが正しくありません。もう一度コピーして貼り付けてください。');
+    const raw = $('#s-code').value.trim();
+    const parsed = parseSetupCode(raw);
+    // 途中で切れている等の調査用に、貼り付けた文字数と先頭を表示する（合言葉が見えない範囲のみ）
+    const bad = () => alert(`設定コードが正しくありません。もう一度コピーして貼り付けてください。\n（貼り付けた文字数：${raw.length}、先頭：${raw.slice(0, 10)}…）\n正しいコードは「KENSA1:」で始まる約190文字です。`);
+    if (!parsed) return bad();
     const key = parsed.key || $('#s-key').value.trim();
-    if (!/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(parsed.api)) return alert('設定コードが正しくありません。もう一度コピーして貼り付けてください。');
+    if (!/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(parsed.api)) return bad();
     if (!key) return alert('合言葉を入力してください。');
     const conn = { api: parsed.api, key, name: '' };
     try {
