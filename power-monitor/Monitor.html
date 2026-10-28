@@ -239,7 +239,7 @@
       初期化中...
     </div>
 
-    <div id="interval">
+    <div id="changed">
       --
     </div>
 
@@ -248,18 +248,17 @@
 
 <script>
 
-  // 取得と取得の最短間隔（ミリ秒）
+  // 取得を始めてから次の取得を始めるまでの最短間隔（ミリ秒）。元のデータは1秒ごとに更新される
   const MIN_GAP_MS = 1000;
 
-  // 機器の更新間隔が分からないときの取得間隔
-  const DEFAULT_GAP_MS = 2000;
-
-  // 新しい点が出るはずの時刻から少し待ってから取りに行く余裕
-  const MARGIN_MS = 300;
+  // 値が変わらないまま、この時間が過ぎたら色で知らせる（ミリ秒）
+  const SLOW_MS = 5000;
+  const STALE_MS = 15000;
 
   let last = null;          // 最後に受け取ったデータ
   let receivedAt = 0;       // それを受け取った時刻（この端末の時計）
   let lastSourceMs = null;
+  let changedAt = 0;        // 最後に値（データ時刻）が変わった時刻
   let timer = null;
   let inFlight = false;     // 通信中か
 
@@ -275,6 +274,7 @@
 
     const isNew = data.source_ms !== lastSourceMs;
     lastSourceMs = data.source_ms;
+    if (isNew) changedAt = Date.now();
 
     setText('ch1Current', ch1Current.toFixed(3), isNew);
     setText('ch1Power', Number(data.ch1.power).toFixed(1) + ' W', isNew);
@@ -294,9 +294,6 @@
 
     document.getElementById('sourceTime').textContent =
       'データ時刻 ' + (data.source_ms ? hms(new Date(data.source_ms)) : data.source_time_ch1);
-
-    document.getElementById('interval').textContent =
-      data.interval_ms ? '機器の更新間隔: 約' + (data.interval_ms / 1000).toFixed(1) + '秒' : '';
 
     document.getElementById('status').textContent = '取得成功';
 
@@ -326,46 +323,38 @@
   /*
    * 「データの遅れ」＝ 今 − 機器のデータ時刻
    * サーバーで計算した遅れに、受け取ってからの経過時間を足す（端末の時計ズレの影響を受けない）
+   * 色は「値が何秒変わっていないか」で付ける（通信が止まったことに気づけるように）
    */
   function showLag() {
 
     const el = document.getElementById('lag');
+    const ch = document.getElementById('changed');
 
-    if (!last || last.age_ms === null || last.age_ms === undefined) {
+    if (!last) {
+      return;
+    }
+
+    const quiet = Date.now() - changedAt;
+    ch.textContent = '値の更新: ' + (quiet / 1000).toFixed(0) + '秒前';
+    el.classList.toggle('slow', quiet > SLOW_MS && quiet <= STALE_MS);
+    el.classList.toggle('stale', quiet > STALE_MS);
+
+    if (last.age_ms === null || last.age_ms === undefined) {
       el.textContent = '--';
       return;
     }
 
-    const lagMs = last.age_ms + (Date.now() - receivedAt);
-    const interval = last.interval_ms || 10000;
-
-    el.textContent = (Math.max(0, lagMs) / 1000).toFixed(1) + ' 秒';
-    el.classList.toggle('slow', lagMs > interval * 1.5 && lagMs <= interval * 3);
-    el.classList.toggle('stale', lagMs > interval * 3);
+    const lagMs = Math.max(0, last.age_ms + (Date.now() - receivedAt));
+    const m = Math.floor(lagMs / 60000);
+    el.textContent = (m ? m + '分' : '') + ((lagMs % 60000) / 1000).toFixed(m ? 0 : 1) + '秒';
   }
 
 
   /*
-   * 次に取りに行くまでの待ち時間を決める
-   * 機器の更新間隔が分かれば「次の点が出るはずの時刻」に合わせて取りに行く
+   * 次に取りに行くまでの待ち時間：前回の取得開始から1秒たっていなければ、たつまで待つ
    */
-  function nextDelay(data, tookMs) {
-
-    if (!data || !data.interval_ms || data.age_ms === null || data.age_ms === undefined) {
-      return DEFAULT_GAP_MS;
-    }
-
-    const lagNow = data.age_ms + tookMs / 2;
-
-    // 機器から長く届いていない（停止・圏外など）ときはゆっくり
-    if (lagNow > data.interval_ms * 3) {
-      return 5000;
-    }
-
-    // 次の点が出るはずの時刻まで待つ（取得にかかる時間ぶん早めに出発）
-    const wait = data.interval_ms - lagNow - tookMs + MARGIN_MS;
-
-    return Math.min(Math.max(wait, MIN_GAP_MS), data.interval_ms);
+  function nextDelay(tookMs) {
+    return Math.max(MIN_GAP_MS - tookMs, 200);
   }
 
 
@@ -399,7 +388,7 @@
         }
 
         showData(data);
-        schedule(nextDelay(data, took));
+        schedule(nextDelay(took));
       })
 
       .withFailureHandler(function(error) {

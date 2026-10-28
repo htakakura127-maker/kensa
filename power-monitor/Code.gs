@@ -12,7 +12,7 @@ const COOKIE_CACHE_SEC = 6 * 60 * 60;
 
 // 複数の画面で同時に開いたとき、この時間内なら取得結果を共有する（ミリ秒）
 const RESULT_CACHE_KEY = 'informetis_latest';
-const RESULT_SHARE_MS  = 1500;
+const RESULT_SHARE_MS  = 900;
 
 
 // ==============================
@@ -122,17 +122,7 @@ function getInformetisData() {
   const mainCurrent = Math.max(current1, current2);
 
 
-  // ----------------------------
-  // 機器がデータを送ってくる間隔（直近2点の時刻差）
-  // ----------------------------
   const sourceMs = toMs(latest1.xs);
-  let intervalMs = null;
-  if (ch1.length >= 2) {
-    const prevMs = toMs(ch1[ch1.length - 2].xs);
-    if (sourceMs !== null && prevMs !== null && sourceMs > prevMs) {
-      intervalMs = sourceMs - prevMs;
-    }
-  }
 
 
   // ----------------------------
@@ -155,9 +145,6 @@ function getInformetisData() {
     source_time_ch1: latest1.xs,
     source_time_ch2: latest2.xs,
     source_ms: sourceMs,
-
-    // 機器の更新間隔（ミリ秒）
-    interval_ms: intervalMs,
 
     ch1: {
       power: power1,
@@ -286,6 +273,17 @@ function toMs(xs) {
   }
 
   let s = String(xs).trim();
+
+  // 年の無い「MM/dd HH:mm(:ss)」は今年の日本時間として扱う（年をまたいだ直後は去年）
+  const md = s.match(/^(\d{1,2})\/(\d{1,2})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  if (md) {
+    const p2 = n => ('0' + n).slice(-2);
+    const year = Number(Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy'));
+    const build = y => Date.parse(y + '-' + p2(md[1]) + '-' + p2(md[2]) + 'T' + p2(md[3]) + ':' + md[4] + ':' + (md[5] || '00') + '+09:00');
+    let ms = build(year);
+    if (ms > Date.now() + 24 * 60 * 60 * 1000) ms = build(year - 1);
+    return isNaN(ms) ? null : ms;
+  }
 
   // タイムゾーン無しの「yyyy-MM-dd HH:mm(:ss)」は日本時間として扱う
   if (/^\d{4}[-/]\d{1,2}[-/]\d{1,2}[ T]\d{1,2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(s)) {

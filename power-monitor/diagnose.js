@@ -21,6 +21,14 @@
     if (xs === null || xs === undefined || xs === '') return null;
     if (typeof xs === 'number' || /^\d+(\.\d+)?$/.test(String(xs))) { var n = Number(xs); return n < 1e12 ? n * 1000 : n; }
     var s = String(xs).trim();
+    var md = s.match(/^(\d{1,2})\/(\d{1,2})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+    if (md) {
+      var q = function (v) { return ('0' + v).slice(-2); };
+      var y = new Date().getFullYear();
+      var t = Date.parse(y + '-' + q(md[1]) + '-' + q(md[2]) + 'T' + q(md[3]) + ':' + md[4] + ':' + (md[5] || '00') + '+09:00');
+      if (t > Date.now() + 864e5) t = Date.parse((y - 1) + '-' + q(md[1]) + '-' + q(md[2]) + 'T' + q(md[3]) + ':' + md[4] + ':' + (md[5] || '00') + '+09:00');
+      return isNaN(t) ? null : t;
+    }
     var m = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?/);
     if (m && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(s)) {
       var p = function (v) { return ('0' + v).slice(-2); };
