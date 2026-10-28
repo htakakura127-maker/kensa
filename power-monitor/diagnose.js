@@ -1,11 +1,17 @@
 // Informetis のグラフ画面（/pro/MACアドレス/）を開いた状態で実行する診断スクリプト
-// 60秒間、画面が裏でどこからデータを取っているか・データ自体がどれだけ遅れているかを記録して、結果を表示する
+// 画面の自動更新を止め、同じページを1秒ごとに裏で取り直して、
+// データの最新点がいつ変わるか・データ自体がどれだけ遅れているか・1回の取得に何秒かかるかを60秒間記録する
 (function () {
   var WATCH_SEC = 60;
+  var POLL_MS = 1000;
   var t0 = Date.now();
-  var log = [];        // 通信の記録
-  var changes = [];    // graphs_data の最新点が変わった記録
   var lines = [];
+  var url = location.href;
+
+  // ---- 自動更新を止める（setTimeout / setInterval を全部解除）----
+  var maxId = setTimeout(function () {}, 0);
+  for (var i = 0; i <= maxId + 1000; i++) { clearTimeout(i); clearInterval(i); }
+  try { window.stop(); } catch (e) {}
 
   function sec(ms) { return (ms / 1000).toFixed(1) + '秒'; }
   function at() { return '+' + sec(Date.now() - t0); }
@@ -24,9 +30,9 @@
     return isNaN(ms) ? null : ms;
   }
 
-  function lastPoint() {
+  function lastPoint(g) {
     try {
-      var d = window.graphs_data && graphs_data.ch_data;
+      var d = g && g.ch_data;
       if (!d) return null;
       var c1 = d.ch1_data || [], c2 = d.ch2_data || [];
       if (!c1.length) return null;
@@ -34,10 +40,16 @@
     } catch (e) { return null; }
   }
 
+  function parseGraphs(html) {
+    var m = html.match(/(?:var\s+)?graphs_data\s*=\s*(\{[\s\S]*?\});/);
+    if (!m) return null;
+    try { return new Function('return (' + m[1] + ');')(); } catch (e) { return null; }
+  }
+
   // ---- 1. 今の graphs_data の状態 ----
   lines.push('■ 診断 ' + new Date().toString());
-  lines.push('URL: ' + location.href);
-  var lp = lastPoint();
+  lines.push('URL: ' + url);
+  var lp = lastPoint(window.graphs_data);
   if (!lp) {
     lines.push('graphs_data.ch_data が見つかりません（グラフ画面で実行してください）');
   } else {
@@ -48,14 +60,13 @@
     if (ms !== null) lines.push('最新点の遅れ（今 − 最新点の時刻）: ' + sec(Date.now() - ms));
     if (ms !== null && pms !== null) lines.push('点と点の間隔: ' + sec(ms - pms));
     try {
-      var keys = Object.keys(graphs_data);
-      lines.push('graphs_data のキー: ' + keys.join(', '));
+      lines.push('graphs_data のキー: ' + Object.keys(graphs_data).join(', '));
       lines.push('ch_data のキー: ' + Object.keys(graphs_data.ch_data).join(', '));
       lines.push('ch1_data[最後] の中身: ' + cut(JSON.stringify(graphs_data.ch_data.ch1_data[graphs_data.ch_data.ch1_data.length - 1]), 300));
     } catch (e) {}
   }
 
-  // ---- 2. ページ読み込みから今までの通信（ブラウザの記録） ----
+  // ---- 2. ページ読み込みから今までの通信 ----
   lines.push('');
   lines.push('■ これまでの通信（画像・CSS・フォントは除く）');
   try {
@@ -63,12 +74,16 @@
       if (/\.(png|jpe?g|gif|svg|ico|css|woff2?|ttf)(\?|$)/i.test(r.name)) return;
       lines.push('[' + r.initiatorType + '] ' + r.name + '  ' + Math.round(r.duration) + 'ms');
     });
+    var nav = performance.getEntriesByType('navigation')[0];
+    if (nav) lines.push('このページ自体の読み込み: ' + Math.round(nav.responseEnd - nav.requestStart) + 'ms（' + nav.type + '）');
   } catch (e) { lines.push('取得不可: ' + e); }
 
-  // ---- 3. ページ内スクリプトから更新処理らしき箇所を抜き出す ----
+  // ---- 3. 自動更新とデータ取得の手がかり ----
   lines.push('');
-  lines.push('■ ページ内スクリプトの手がかり');
-  var pat = /(setInterval|setTimeout|location\.reload|WebSocket|EventSource|socket\.io|\$\.ajax|\$\.get|\$\.post|\$\.getJSON|fetch\(|XMLHttpRequest|\/api\/|graphs_data\s*=|\.json)/g;
+  lines.push('■ 自動更新・データ取得の手がかり');
+  var meta = document.querySelector('meta[http-equiv="refresh" i]');
+  lines.push('meta refresh: ' + (meta ? meta.content : 'なし'));
+  var pat = /(setInterval|setTimeout|location\.reload|location\.href\s*=|WebSocket|EventSource|socket\.io|\$\.ajax|\$\.get|\$\.post|\$\.getJSON|fetch\(|XMLHttpRequest|\/api\/|\.json)/g;
   var found = 0;
   [].forEach.call(document.scripts, function (s, i) {
     if (s.src) { lines.push('外部スクリプト: ' + s.src); return; }
@@ -81,83 +96,78 @@
       lines.push(t.slice(a, b).replace(/\s+/g, ' '));
     }
   });
-  var meta = document.querySelector('meta[http-equiv="refresh" i]');
-  if (meta) lines.push('meta refresh: ' + meta.content);
 
-  // ---- 4. これから60秒間の通信を横取りして記録 ----
-  var of = window.fetch;
-  if (of) window.fetch = function (u, o) {
-    var url = typeof u === 'string' ? u : (u && u.url), st = Date.now();
-    return of.apply(this, arguments).then(function (res) {
-      res.clone().text().then(function (b) { log.push(at() + ' fetch ' + ((o && o.method) || 'GET') + ' ' + url + ' → ' + res.status + ' ' + (Date.now() - st) + 'ms 内容: ' + cut(b, 400)); });
-      return res;
-    });
-  };
-  var oo = XMLHttpRequest.prototype.open, os = XMLHttpRequest.prototype.send;
-  XMLHttpRequest.prototype.open = function (m, u) { this.__d = { m: m, u: u }; return oo.apply(this, arguments); };
-  XMLHttpRequest.prototype.send = function () {
-    var x = this, st = Date.now();
-    x.addEventListener('loadend', function () {
-      var b = ''; try { b = x.responseText; } catch (e) { b = '(' + x.responseType + ')'; }
-      log.push(at() + ' XHR ' + (x.__d && x.__d.m) + ' ' + (x.__d && x.__d.u) + ' → ' + x.status + ' ' + (Date.now() - st) + 'ms 内容: ' + cut(b, 400));
-    });
-    return os.apply(this, arguments);
-  };
-  var OW = window.WebSocket;
-  if (OW) window.WebSocket = function (u, p) {
-    var ws = p ? new OW(u, p) : new OW(u);
-    log.push(at() + ' WebSocket 接続: ' + u);
-    ws.addEventListener('message', function (e) { log.push(at() + ' WebSocket 受信: ' + cut(e.data, 400)); });
-    return ws;
-  };
+  // ---- 画面を診断画面に置き換える（meta refresh もこれで止まる）----
+  document.open();
+  document.write('<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>診断中</title>' +
+    '<body style="margin:0;padding:16px;background:#111;color:#fff;font:15px/1.5 -apple-system,sans-serif">' +
+    '<div id="st">診断中…</div><div id="ls" style="margin-top:8px;font:12px/1.5 monospace;color:#aaa;white-space:pre-wrap"></div>' +
+    '<textarea id="ta" style="display:none;width:100%;height:60vh;font:12px monospace;color:#000;background:#fff"></textarea>' +
+    '<button id="cp" style="display:none;margin-top:8px;padding:12px 18px;font-size:17px">結果をコピー</button>' +
+    '<button id="bk" style="display:none;margin:8px 0 0 8px;padding:12px 18px;font-size:17px">グラフ画面に戻る</button></body>');
+  document.close();
 
-  // graphs_data の最新点が変わったタイミングを1秒ごとに確認
+  // ---- 4. 同じページを1秒ごとに取り直して、最新点が変わるタイミングを測る ----
+  var polls = [], changes = [];
   var lastXs = lp ? lp.xs : null;
-  var iv = setInterval(function () {
-    var p = lastPoint();
-    if (p && p.xs !== lastXs) {
-      var ms = toMs(p.xs);
-      changes.push(at() + ' 最新点が更新 xs=' + JSON.stringify(p.xs) + ' CH1=' + p.ys1 + 'W CH2=' + p.ys2 + 'W' + (ms !== null ? ' 遅れ=' + sec(Date.now() - ms) : ''));
-      lastXs = p.xs;
-    }
-  }, 1000);
+  var busy = false;
 
-  // 進み具合の表示
-  var box = document.createElement('div');
-  box.style.cssText = 'position:fixed;z-index:2147483647;left:8px;right:8px;bottom:8px;background:#111;color:#fff;padding:12px;border-radius:10px;font:14px/1.5 sans-serif;box-shadow:0 4px 20px rgba(0,0,0,.5)';
-  document.body.appendChild(box);
+  function poll() {
+    if (busy) return;
+    busy = true;
+    var st = Date.now();
+    fetch(url, { credentials: 'same-origin', cache: 'no-store' }).then(function (res) {
+      return res.text().then(function (html) {
+        var took = Date.now() - st;
+        var p = lastPoint(parseGraphs(html));
+        var login = html.indexOf('name="password"') !== -1;
+        polls.push(took);
+        if (login) {
+          changes.push(at() + ' ログイン画面が返ってきました（ログインが切れています）');
+        } else if (!p) {
+          changes.push(at() + ' graphs_data を読めませんでした（' + res.status + ', ' + html.length + '文字）');
+        } else if (p.xs !== lastXs) {
+          var ms = toMs(p.xs);
+          changes.push(at() + ' 最新点が更新 xs=' + JSON.stringify(p.xs) + ' CH1=' + p.ys1 + 'W CH2=' + p.ys2 + 'W' +
+            (ms !== null ? ' 遅れ=' + sec(Date.now() - ms) : '') + ' 取得' + took + 'ms');
+          lastXs = p.xs;
+        }
+        document.getElementById('ls').textContent = changes.slice(-12).join('\n');
+      });
+    }).catch(function (e) {
+      changes.push(at() + ' 取得失敗: ' + e);
+    }).then(function () { busy = false; });
+  }
+
+  poll();
+  var iv = setInterval(poll, POLL_MS);
   var cd = setInterval(function () {
     var left = WATCH_SEC - Math.floor((Date.now() - t0) / 1000);
-    box.textContent = '診断中… 残り' + left + '秒（このまま画面を開いておいてください）  通信' + log.length + '件 / 更新' + changes.length + '回';
+    document.getElementById('st').textContent = '診断中… 残り' + left + '秒（このまま画面を開いておいてください）  取得' + polls.length + '回 / 更新' + changes.length + '回';
   }, 500);
 
   setTimeout(function () {
     clearInterval(iv); clearInterval(cd);
     lines.push('');
-    lines.push('■ ' + WATCH_SEC + '秒間の通信');
-    lines.push(log.length ? log.join('\n') : '（なし）');
-    lines.push('');
-    lines.push('■ ' + WATCH_SEC + '秒間の graphs_data の更新');
-    lines.push(changes.length ? changes.join('\n') : '（変化なし）');
+    lines.push('■ ' + WATCH_SEC + '秒間、' + (POLL_MS / 1000) + '秒ごとにページを取り直した結果');
+    if (polls.length) {
+      var sorted = polls.slice().sort(function (a, b) { return a - b; });
+      lines.push('取得回数: ' + polls.length + ' / 1回の取得時間 最短' + sorted[0] + 'ms 中央' + sorted[Math.floor(sorted.length / 2)] + 'ms 最長' + sorted[sorted.length - 1] + 'ms');
+    }
+    lines.push(changes.length ? changes.join('\n') : '（最新点の変化なし）');
 
     var text = lines.join('\n');
-    box.innerHTML = '';
-    box.style.top = '8px';
-    var ta = document.createElement('textarea');
+    document.getElementById('st').textContent = '診断が終わりました。「結果をコピー」を押して貼り付けてください。';
+    document.getElementById('ls').style.display = 'none';
+    var ta = document.getElementById('ta'), cp = document.getElementById('cp'), bk = document.getElementById('bk');
     ta.value = text;
-    ta.style.cssText = 'width:100%;height:calc(100% - 50px);font:12px monospace;color:#000;background:#fff';
-    var btn = document.createElement('button');
-    btn.textContent = '結果をコピー';
-    btn.style.cssText = 'margin-top:8px;padding:10px 16px;font-size:16px';
-    btn.onclick = function () {
-      ta.select();
-      try { navigator.clipboard.writeText(text).then(function () { btn.textContent = 'コピーしました'; }, function () { document.execCommand('copy'); btn.textContent = 'コピーしました'; }); }
-      catch (e) { document.execCommand('copy'); btn.textContent = 'コピーしました'; }
+    ta.style.display = cp.style.display = bk.style.display = 'block';
+    bk.style.display = 'inline-block'; cp.style.display = 'inline-block';
+    cp.onclick = function () {
+      ta.focus(); ta.select();
+      try { navigator.clipboard.writeText(text).then(function () { cp.textContent = 'コピーしました'; }, function () { document.execCommand('copy'); cp.textContent = 'コピーしました'; }); }
+      catch (e) { document.execCommand('copy'); cp.textContent = 'コピーしました'; }
     };
-    var close = document.createElement('button');
-    close.textContent = '閉じる';
-    close.style.cssText = 'margin:8px 0 0 8px;padding:10px 16px;font-size:16px';
-    close.onclick = function () { box.remove(); };
-    box.appendChild(ta); box.appendChild(btn); box.appendChild(close);
+    bk.onclick = function () { location.href = url; };
   }, WATCH_SEC * 1000);
 })();
