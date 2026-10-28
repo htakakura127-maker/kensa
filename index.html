@@ -20,8 +20,8 @@
 body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.5 -apple-system, "Hiragino Sans", "Hiragino Kaku Gothic ProN", sans-serif; -webkit-text-size-adjust: 100%; }
 button, input, select, textarea { font: inherit; color: inherit; }
 header.top { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 8px; padding: calc(env(safe-area-inset-top) + 8px) 16px 8px; background: var(--pri); color: var(--pri-ink); }
-header.top .ttl { flex: 1; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-header.top button.back { background: none; border: 0; color: inherit; font-size: 17px; padding: 4px 8px 4px 0; }
+header.top .ttl { flex: 1; min-width: 0; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+header.top button.back { background: none; border: 0; color: inherit; font-size: 17px; padding: 4px 8px 4px 0; white-space: nowrap; }
 .net { font-size: 12px; padding: 3px 10px; border-radius: 99px; background: rgba(255,255,255,.2); border: 0; color: #fff; white-space: nowrap; }
 .net.off { background: #b71c1c; }
 .net.pend { background: #e08a00; }
@@ -30,9 +30,12 @@ main { padding: 12px 16px calc(env(safe-area-inset-bottom) + 96px); max-width: 7
 h2 { font-size: 18px; margin: 0 0 10px; }
 h3 { font-size: 16px; margin: 18px 0 6px; }
 h3 small { font-weight: 400; color: var(--sub); font-size: 12px; }
-label { display: block; font-size: 13px; color: var(--sub); margin-bottom: 10px; }
-label > input, label > select, label > textarea { display: block; width: 100%; margin-top: 4px; }
-input, select, textarea { font-size: 16px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; min-height: 42px; }
+label { display: block; min-width: 0; font-size: 13px; color: var(--sub); margin-bottom: 10px; }
+label > input, label > select, label > textarea { display: block; width: 100%; min-width: 0; margin-top: 4px; }
+input, select, textarea { font-size: 16px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; min-height: 42px; min-width: 0; }
+/* iOS の日付欄は既定の見た目だと幅が縮まず隣の欄に重なるため、見た目を解除して幅を効かせる */
+input[type=date] { -webkit-appearance: none; appearance: none; width: 100%; }
+input[type=date]::-webkit-date-and-time-value { text-align: left; }
 input::placeholder { color: #b9c1cb; }
 input:disabled, select:disabled, textarea:disabled { background: #f0f2f5; color: var(--ink); opacity: 1; -webkit-text-fill-color: var(--ink); }
 textarea { min-height: 120px; resize: vertical; }
@@ -40,14 +43,13 @@ textarea { min-height: 120px; resize: vertical; }
 .btn.primary { background: var(--pri); color: #fff; border-color: var(--pri); }
 .btn.ok { background: var(--done); color: #fff; border-color: var(--done); }
 .btn.warn { color: var(--ng); }
-.btn:disabled { opacity: .45; }
-.row { display: flex; gap: 8px; align-items: center; }
-.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }
+.btn.small { padding: 9px; font-size: 14px; }
+.grid2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 10px; }
 .muted { color: var(--sub); font-size: 13px; }
-.notice { padding: 10px 12px; border-radius: 10px; margin-bottom: 12px; font-size: 14px; }
-.notice.work { background: #fff1e0; border: 1px solid #f0c58f; }
-.notice.err { background: #fdecea; border: 1px solid #f3b4ae; }
-.notice.done { background: #e6f4ec; border: 1px solid #a9d8bc; }
+.notice { padding: 10px 12px; border-radius: 10px; margin-bottom: 12px; font-size: 14px; background: #fff; border: 1px solid var(--line); }
+.notice.work { background: #fff1e0; border-color: #f0c58f; }
+.notice.err { background: #fdecea; border-color: #f3b4ae; }
+.notice.done { background: #e6f4ec; border-color: #a9d8bc; }
 .filters { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; margin-bottom: 8px; }
 .filters button { flex: none; border: 1px solid var(--line); background: #fff; border-radius: 99px; padding: 6px 12px; font-size: 14px; }
 .filters button.on { background: var(--pri); color: #fff; border-color: var(--pri); }
@@ -60,44 +62,61 @@ textarea { min-height: 120px; resize: vertical; }
 .item .sub { font-size: 13px; color: var(--sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .badge { flex: none; font-size: 12px; font-weight: 700; color: #fff; padding: 3px 9px; border-radius: 99px; max-width: 45%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .st-todo { background: var(--todo); } .st-work { background: var(--work); } .st-done { background: var(--done); } .st-pend { background: #e08a00; }
-dl.info { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; margin: 8px 0 0; font-size: 14px; }
+dl.info { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 12px; margin: 8px 0 0; font-size: 14px; }
 dl.info dt { color: var(--sub); }
 dl.info dd { margin: 0; word-break: break-all; }
-table.pt { width: 100%; border-collapse: collapse; font-size: 14px; margin-bottom: 6px; }
+table.pt { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 14px; margin-bottom: 6px; }
 table.pt caption { text-align: left; font-weight: 700; font-size: 13px; color: var(--sub); padding: 4px 0; }
-table.pt th { font-size: 11px; color: var(--sub); font-weight: 600; padding: 2px; }
+table.pt th { font-size: 11px; line-height: 1.3; color: var(--sub); font-weight: 600; padding: 2px 1px; }
 table.pt td { padding: 3px 2px; text-align: center; vertical-align: top; }
-table.pt td.ref { color: var(--sub); font-size: 13px; padding-top: 12px; white-space: nowrap; }
-table.pt input { width: 100%; min-width: 0; text-align: right; padding: 8px 6px; }
+table.pt td.ref { color: var(--sub); font-size: 13px; padding-top: 12px; overflow: hidden; text-overflow: ellipsis; }
+table.pt input { width: 100%; text-align: right; padding: 8px 5px; }
 .dev { font-size: 11px; color: var(--sub); text-align: right; min-height: 14px; }
 .dev.ng { color: var(--ng); font-weight: 700; }
 .chk { display: flex; align-items: center; gap: 8px; color: var(--ink); font-size: 15px; margin: 6px 0 12px; }
 .chk input { width: 22px; height: 22px; min-height: 0; margin: 0; }
-.names { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.names { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .names button { padding: 12px 4px; border: 1px solid var(--line); border-radius: 10px; background: #fff; font-size: 16px; }
+.part { display: grid; grid-template-columns: minmax(0, 1fr) 58px 40px; gap: 6px; margin-bottom: 6px; }
+.part.k { grid-template-columns: minmax(0, 1fr) 52px 72px 40px; }
+.part input.num { text-align: right; }
+.part .del { border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ng); font-size: 18px; }
+.panel { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; }
+.panel .pname { font-weight: 700; }
+.pitem { display: grid; grid-template-columns: minmax(0, 1fr) 120px; gap: 8px; align-items: center; margin-top: 8px; font-size: 14px; }
+.pclock { display: grid; grid-template-columns: minmax(0, 1fr) 120px; gap: 8px; align-items: center; margin-top: 6px; font-size: 14px; }
+.ptext { font-size: 12px; color: var(--sub); margin-top: 4px; }
 .actions { position: fixed; left: 0; right: 0; bottom: 0; z-index: 4; padding: 8px 16px calc(env(safe-area-inset-bottom) + 8px); background: rgba(243,245,248,.96); border-top: 1px solid var(--line); }
 .actions .inner { max-width: 760px; margin: 0 auto; display: flex; gap: 8px; }
 .actions .btn { margin: 0; }
-#kbbar { position: fixed; left: 0; right: 0; z-index: 20; display: flex; gap: 8px; padding: 6px 10px; background: #d1d5db; }
+#kbbar { position: fixed; left: 0; right: 0; z-index: 20; display: flex; flex-direction: column; gap: 6px; padding: 6px 8px; background: #d1d5db; }
 #kbbar[hidden] { display: none; }
-#kbbar button { flex: 1; padding: 10px; border: 0; border-radius: 8px; background: #fff; font-size: 17px; font-weight: 700; }
+.kbrow { display: flex; gap: 6px; }
+.kbrow:empty { display: none; }
+#kbbar button { flex: 1; min-width: 0; padding: 10px 4px; border: 0; border-radius: 8px; background: #fff; font-size: 16px; font-weight: 700; white-space: nowrap; }
+#kbpre button { background: #e8f0f8; color: var(--pri); }
 </style>
 </head>
 <body>
 <header class="top" id="top"></header>
 <main id="app"></main>
 <div id="kbbar" hidden>
-  <button type="button" data-kb="sign">± 符号</button>
-  <button type="button" data-kb="prev">↑ 前へ</button>
-  <button type="button" data-kb="next">↓ 次へ</button>
-  <button type="button" data-kb="done">閉じる</button>
+  <div class="kbrow" id="kbpre"></div>
+  <div class="kbrow">
+    <button type="button" data-kb="sign">± 符号</button>
+    <button type="button" data-kb="prev">↑ 前へ</button>
+    <button type="button" data-kb="next">↓ 次へ</button>
+    <button type="button" data-kb="done">閉じる</button>
+  </div>
 </div>
 <script>
 'use strict';
 const API = window.KENSA_API || '';
 const $ = s => document.querySelector(s);
 const h = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const clone = o => JSON.parse(JSON.stringify(o));
 const ST = { TODO: '未着手', WORK: '作業中', DONE: '完了' };
+const KIND = { KEIKI: '計器', VALVE: '調節弁', TOUCH: 'タッチパネル' };
 
 // ---- 端末内保存（圏外でも入力が消えないよう、変更のたびに書き込む）----
 const store = {
@@ -121,7 +140,8 @@ const saveDrafts = () => store.set('drafts', drafts);
 const getDev = id => devices.find(d => d.id === id);
 const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 const hm = s => s ? String(s).slice(5, 16).replace('-', '/') : '';
-const fmt = v => v == null || v === '' ? '' : String(+(+v).toFixed(4));
+const isNum = v => v !== null && v !== '' && !isNaN(+v);
+const fmt = v => v == null || v === '' ? '' : isNum(v) ? String(+(+v).toFixed(4)) : String(v);
 
 // ---- サーバー通信 ----
 async function api(action, body) {
@@ -156,6 +176,19 @@ async function refresh(quiet) {
     fetchedAt = j.now;
     store.set('devices', devices);
     store.set('fetchedAt', fetchedAt);
+    if (j.names && j.names.length) {
+      names = j.names;
+      store.set('names', names);
+      // 名簿から外れた名前のままなら選び直してもらう（未送信があれば送信を優先）
+      if (cfg && cfg.name && !names.includes(cfg.name) && !Object.values(drafts).some(d => d.pending)) {
+        alert(`名簿に「${cfg.name}」がありません。名前を選び直してください。`);
+        cfg.name = '';
+        store.set('cfg', cfg);
+        render();
+        renderNames();
+        return;
+      }
+    }
   } catch (e) {
     if (!quiet) alert(e.message);
   }
@@ -198,25 +231,35 @@ function scheduleSync(ms) {
 }
 
 setInterval(async () => {
-  if (!cfg) return;
+  if (!cfg || !cfg.name) return;
   await sync();
   if (view.screen === 'list' && document.visibilityState === 'visible') refresh(true);
 }, 30000);
 window.addEventListener('online', () => sync());
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && cfg) { sync(); if (view.screen === 'list') refresh(true); } });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && cfg && cfg.name) { sync(); if (view.screen === 'list') refresh(true); } });
 
 // ---- データ ----
 function emptyCh() { return { up: ['', '', '', '', ''], down: ['', '', '', '', ''], adj: false, adjUp: ['', '', '', '', ''], adjDown: ['', '', '', '', ''] }; }
 
 function normalize(d, data) {
   const prev = d.info.prev || {};
-  const base = {
-    date: today(), temp: '', result: '合格', overall: '合格',
-    note: (prev.note || []).join('\n'), inspectors: [cfg.name, ''],
-  };
+  const base = { date: today(), temp: '', note: (prev.note || []).join('\n'), inspectors: [cfg.name, ''], parts: clone(prev.parts || []) };
+  if (d.kind === KIND.KEIKI) Object.assign(base, { result: '合格', overall: '合格' });
+  if (d.kind === KIND.VALVE) Object.assign(base, { judge: '良好' });
   const out = Object.assign(base, data || {});
-  out.ch = d.info.chs.map((_, k) => Object.assign(emptyCh(), ((data && data.ch) || [])[k] || {}));
+  out.ch = (d.info.chs || []).map((_, k) => Object.assign(emptyCh(), ((data && data.ch) || [])[k] || {}));
+  if (d.kind === KIND.TOUCH) {
+    out.panels = (d.info.panels || []).map((_, b) => Object.assign(
+      { items: ['良好', '良好', '良好', '良好'], clockDir: '良好', clockMin: '' }, ((data && data.panels) || [])[b] || {}));
+  }
   return out;
+}
+
+// 時計の遅れ／進みから報告書の文言を作る（前年度の書き方に合わせる）
+function clockText(p) {
+  if (!p.clockDir || p.clockDir === '良好') return '良好';
+  const m = String(p.clockMin || '').trim() || '○';
+  return `ﾀｯﾁﾊﾟﾈﾙの内部時計時刻が${p.clockDir === '遅れ' ? '遅れて' : '進んで'}いたため実施（${m}分${p.clockDir}）`;
 }
 
 function setPath(obj, path, val) {
@@ -292,7 +335,9 @@ function renderSetup() {
 }
 
 function renderNames() {
-  $('#s-names').innerHTML = `<div class="muted" style="margin-bottom:8px">あなたの名前を選んでください</div>
+  const el = $('#s-names');
+  if (!el) return;
+  el.innerHTML = `<div class="muted" style="margin-bottom:8px">あなたの名前を選んでください</div>
     <div class="names">${names.map(n => `<button data-act="pickname" data-name="${h(n)}">${h(n)}</button>`).join('')}</div>`;
 }
 
@@ -330,6 +375,21 @@ function renderList() {
     <button class="btn" data-act="logout" style="margin-top:24px">名前を変更する</button>`;
 }
 
+function infoCard(d) {
+  const i = d.info;
+  const row = (k, v) => v ? `<dt>${k}</dt><dd>${v}</dd>` : '';
+  const prev = `${h(i.prev.date || '')}　${h((i.prev.inspectors || []).filter(Boolean).join('・'))}`;
+  if (d.kind === KIND.TOUCH) {
+    return `<section class="card"><div style="font-weight:700">${h(d.sheet)}</div><dl class="info">
+      ${row('No.', h(i.no))}${row('設置場所', h(i.loc))}${row('台数', i.panels.length + ' 台')}${row('前回', prev)}</dl></section>`;
+  }
+  return `<section class="card"><div style="font-weight:700">${h(i.name || d.title)}</div><dl class="info">
+    ${row('No.', h(i.no) + (i.kanri ? '　管理番号 ' + h(i.kanri) : ''))}
+    ${row('場所', h(i.loc))}${row('型番', h(i.model))}${row('製造番号', h(i.serial))}
+    ${row('範囲', (i.ranges || []).map(h).join('<br>'))}
+    ${row('精度', i.accuracy != null ? '±' + h(i.accuracy) + ' %F.S' : '')}${row('前回', prev)}</dl></section>`;
+}
+
 function renderDetail() {
   const d = getDev(view.id);
   if (!d) { view.screen = 'list'; return render(); }
@@ -337,51 +397,42 @@ function renderDetail() {
   const mine = d.status === ST.WORK && d.worker === cfg.name;
   if (mine && !drafts[d.id]) { drafts[d.id] = { data: normalize(d, d.data), rev: 0, pending: false }; saveDrafts(); }
   const dr = drafts[d.id];
-  const i = d.info;
-  let head = '', body = '', actions = '';
+  let head = '', data = null, editable = false, actions = '';
 
   if (dr && dr.blocked) {
     head = `<div class="notice err">送信できませんでした：${h(dr.blocked)}<br>入力した値はこの端末に残っています。「作業を再開」でロックを取り直すと送信できます。</div>`;
-    body = form(d, dr.data, false);
+    data = dr.data;
     actions = `<button class="btn primary" data-act="start">作業を再開</button>`;
   } else if (mine) {
     if (dr.finish && dr.pending) head = `<div class="notice work">完了済み（未送信）。電波が戻ると自動で送信されます。</div>`;
-    body = form(d, dr.data, true);
-    actions = `<button class="btn warn" data-act="release" style="flex:1">作業をやめる</button><button class="btn ok" data-act="finish" style="flex:2">完了して送信</button>`;
+    data = dr.data;
+    editable = true;
+    actions = `<button class="btn warn" data-act="release" style="flex:1">作業を中断</button><button class="btn ok" data-act="finish" style="flex:2">完了して送信</button>`;
   } else if (d.status === ST.WORK) {
     head = `<div class="notice work"><b>${h(d.worker)}</b> さんが作業中です（${h(hm(d.startedAt))} 開始）。入力はできません。</div>`;
-    body = d.data ? form(d, normalize(d, d.data), false) : '';
+    data = d.data ? normalize(d, d.data) : null;
+    actions = `<button class="btn warn" data-act="force">強制解除（放置されている場合）</button>`;
   } else if (d.status === ST.DONE) {
-    head = `<div class="notice done">完了済みです（${h(hm(d.updatedAt))}）${d.exportedAt ? '・Excel反映済み' : ''}</div>`;
-    body = form(d, normalize(d, d.data), false);
+    head = `<div class="notice done">完了済みです（${h(hm(d.updatedAt))}${d.worker ? '・' + h(d.worker) : ''}）${d.exportedAt ? '・Excel反映済み' : ''}</div>`;
+    data = normalize(d, d.data);
     actions = `<button class="btn" data-act="reopen">修正のため再開する</button>`;
   } else {
     head = `<div class="notice">この機器は未着手です。「作業開始」を押すと、他の人は入力できなくなります。</div>`;
-    body = d.data ? form(d, normalize(d, d.data), false) : '';
+    data = d.data ? normalize(d, d.data) : null;
     actions = `<button class="btn primary" data-act="start">作業開始</button>`;
   }
 
-  $('#app').innerHTML = `
-    <section class="card">
-      <div style="font-weight:700">${h(i.name || d.title)}</div>
-      <dl class="info">
-        <dt>No.</dt><dd>${h(i.no)}　管理番号 ${h(i.kanri)}</dd>
-        <dt>場所</dt><dd>${h(i.loc)}</dd>
-        <dt>型番</dt><dd>${h(i.model)}</dd>
-        <dt>製造番号</dt><dd>${h(i.serial)}</dd>
-        <dt>範囲</dt><dd>${(i.ranges || []).map(h).join('<br>')}</dd>
-        <dt>精度</dt><dd>±${h(i.accuracy)} %F.S</dd>
-        <dt>前回</dt><dd>${h(i.prev.date)}　${h((i.prev.inspectors || []).filter(Boolean).join('・'))}</dd>
-      </dl>
-    </section>
-    ${head}
-    ${body ? `<section class="card">${body}</section>` : ''}
-    ${actions ? `<div class="actions"><div class="inner">${actions}</div></div>` : ''}`;
-  if (body) updateDevs(d, (dr && (mine || dr.blocked)) ? dr.data : normalize(d, d.data));
+  $('#app').innerHTML = `${infoCard(d)}${head}
+    ${data ? `<section class="card">${form(d, data, editable)}</section>` : ''}
+    <div class="actions"><div class="inner">${actions}</div></div>`;
+  if (data) updateDevs(d, data);
 }
 
-function numInput(path, val, placeholder, editable) {
-  return `<input class="num" inputmode="decimal" autocomplete="off" data-k="${path}" value="${h(val)}" placeholder="${h(fmt(placeholder))}" ${editable ? '' : 'disabled'}><div class="dev" data-dev="${path}"></div>`;
+// ---- 入力フォーム ----
+const opts = (list, v) => (list.includes(v) || !v ? list : list.concat([v])).map(x => `<option ${x === v ? 'selected' : ''}>${h(x)}</option>`).join('');
+
+function numInput(path, val, placeholder, editable, presets) {
+  return `<input class="num" inputmode="decimal" autocomplete="off" data-k="${path}" value="${h(val)}" placeholder="${h(fmt(placeholder))}"${presets ? ` data-presets="${h(presets)}"` : ''} ${editable ? '' : 'disabled'}><div class="dev" data-dev="${path}"></div>`;
 }
 
 function pointTable(ch, k, upKey, downKey, c, editable, caption, showPrev) {
@@ -389,41 +440,79 @@ function pointTable(ch, k, upKey, downKey, c, editable, caption, showPrev) {
       <td class="ref">${h(fmt(p.pct))}%</td>
       <td class="ref">${h(fmt(p.input))}</td>
       <td class="ref">${h(fmt(p.expect))}</td>
-      <td>${numInput(`ch.${k}.${upKey}.${i}`, c[upKey][i], showPrev ? p.prevUp : '', editable)}</td>
-      <td>${i < 4 ? numInput(`ch.${k}.${downKey}.${i}`, c[downKey][i], showPrev ? p.prevDown : '', editable) : '<div class="ref" style="padding-top:12px">―</div>'}</td>
+      <td>${numInput(`ch.${k}.${upKey}.${i}`, c[upKey][i], showPrev ? p.prevUp : '', editable, ch.presets)}</td>
+      <td>${i < 4 ? numInput(`ch.${k}.${downKey}.${i}`, c[downKey][i], showPrev ? p.prevDown : '', editable, ch.presets) : '<div class="ref" style="padding-top:12px">―</div>'}</td>
     </tr>`).join('');
   return `<table class="pt"><caption>${caption}</caption>
-    <colgroup><col style="width:13%"><col style="width:17%"><col style="width:16%"><col style="width:27%"><col style="width:27%"></colgroup>
-    <thead><tr><th>点</th><th>入力<br>${h(ch.unitIn)}</th><th>基準<br>${h(ch.unitDisp)}</th><th>UP</th><th>DOWN</th></tr></thead>
+    <colgroup><col style="width:15%"><col style="width:15%"><col style="width:16%"><col style="width:27%"><col style="width:27%"></colgroup>
+    <thead><tr><th>測定点</th><th>入力<br>${h(ch.unitIn)}</th><th>${h(ch.expectLabel || '基準')}<br>${h(ch.unitDisp)}</th><th>UP</th><th>DOWN</th></tr></thead>
     <tbody>${rows}</tbody></table>`;
 }
 
 function form(d, data, editable) {
   const i = d.info;
   const dis = editable ? '' : 'disabled';
-  const opt = (list, v) => list.map(x => `<option ${x === v ? 'selected' : ''}>${h(x)}</option>`).join('');
-  const nameOpts = v => `<option value=""></option>` + opt(names.includes(v) || !v ? names : [v].concat(names), v);
-  let html = `
-    <div class="grid2">
-      <label>試験日<input type="date" data-k="date" value="${h(data.date)}" ${dis}></label>
-      <label>温度 (℃)<input class="num" inputmode="decimal" data-k="temp" value="${h(data.temp)}" placeholder="${h(i.prev.temp)}" ${dis}></label>
-    </div>`;
-  i.chs.forEach((ch, k) => {
-    const c = data.ch[k];
-    html += `<h3>${i.chs.length > 1 ? 'CH' + (k + 1) + ' ' : ''}測定値 <small>目盛 ${h(ch.scale)}　薄字=前回値</small></h3>`;
-    html += pointTable(ch, k, 'up', 'down', c, editable, '調整前', true);
-    html += `<label class="chk"><input type="checkbox" data-k="ch.${k}.adj" ${c.adj ? 'checked' : ''} ${dis}>調整した（調整後の値も入力）</label>`;
-    if (c.adj) html += pointTable(ch, k, 'adjUp', 'adjDown', c, editable, '調整後', false);
-  });
-  html += `
-    <div class="grid2" style="margin-top:12px">
-      <label>判定<select data-k="result" ${dis}>${opt(['合格', '不合格'], data.result)}</select></label>
-      <label>総合判定<select data-k="overall" ${dis}>${opt(['合格', '不合格'], data.overall)}</select></label>
+  const showDate = d.kind !== KIND.TOUCH || i.hasDate;
+  const showTemp = d.kind !== KIND.VALVE;
+  let html = `<div class="grid2">
+      ${showDate ? `<label>試験日<input type="date" data-k="date" value="${h(data.date)}" ${dis}></label>` : ''}
+      ${showTemp ? `<label>温度 (℃)<input class="num" inputmode="decimal" data-k="temp" value="${h(data.temp)}" placeholder="${h(fmt(i.prev.temp))}" ${dis}></label>` : ''}
+    </div>
+    ${showDate ? '' : '<p class="muted">この報告書には試験日の欄がありません。</p>'}`;
+
+  if (d.kind === KIND.TOUCH) {
+    html += i.panels.map((p, b) => {
+      const pd = data.panels[b];
+      const items = i.items.map((label, j) => {
+        if (j === 2) {
+          return `<div class="pclock"><span>${h(label)}</span>
+              <select data-k="panels.${b}.clockDir" ${dis}>${opts(['良好', '遅れ', '進み'], pd.clockDir)}</select></div>
+            ${pd.clockDir && pd.clockDir !== '良好' ? `<div class="pclock"><span>ずれ（分）</span>
+              <input class="num" inputmode="decimal" data-k="panels.${b}.clockMin" value="${h(pd.clockMin)}" placeholder="分" ${dis}></div>` : ''}
+            <div class="ptext" data-ptext="${b}">${h(pd.items[2])}</div>`;
+        }
+        return `<div class="pitem"><span>${h(label)}</span><select data-k="panels.${b}.items.${j}" ${dis}>${opts(['良好', '不良'], pd.items[j])}</select></div>`;
+      }).join('');
+      return `<div class="panel"><div class="pname">${h(p.name)}</div>
+        <div class="muted">${h(p.model)}　${h(p.serial)}${p.made ? '　' + h(p.made) : ''}</div>${items}
+        <div class="ptext">前回：${h((p.prev || []).filter(x => x && x !== '良好').join('／') || 'すべて良好')}</div></div>`;
+    }).join('');
+  } else {
+    i.chs.forEach((ch, k) => {
+      const c = data.ch[k];
+      const title = d.kind === KIND.VALVE ? 'ストローク' : (i.chs.length > 1 ? 'CH' + (k + 1) + ' ' : '') + '測定値';
+      html += `<h3>${title} <small>目盛 ${h(ch.scale)}　薄字=前回値</small></h3>`;
+      html += pointTable(ch, k, 'up', 'down', c, editable, '調整前', true);
+      html += `<label class="chk"><input type="checkbox" data-k="ch.${k}.adj" ${c.adj ? 'checked' : ''} ${dis}>調整した（調整後の値も入力）</label>`;
+      if (c.adj) html += pointTable(ch, k, 'adjUp', 'adjDown', c, editable, '調整後', false);
+    });
+    if (d.kind === KIND.KEIKI) {
+      html += `<div class="grid2" style="margin-top:12px">
+        <label>判定<select data-k="result" ${dis}>${opts(['合格', '不合格'], data.result)}</select></label>
+        <label>総合判定<select data-k="overall" ${dis}>${opts(['合格', '不合格'], data.overall)}</select></label></div>`;
+    } else {
+      html += `<div class="grid2" style="margin-top:12px">
+        <label>判定<select data-k="judge" ${dis}>${opts(['良好', '動作不良'], data.judge)}</select></label></div>`;
+    }
+    // 使用部品
+    const kinds = d.kind === KIND.KEIKI;
+    html += `<h3>使用部品 <small>最大10件</small></h3>` + (data.parts.length ? '' : '<p class="muted">なし</p>') +
+      data.parts.map((p, n) => `<div class="part ${kinds ? 'k' : ''}">
+        <input data-k="parts.${n}.name" value="${h(p.name)}" placeholder="品名" ${dis}>
+        <input class="num" inputmode="decimal" data-k="parts.${n}.qty" value="${h(p.qty)}" placeholder="数" ${dis}>
+        ${kinds ? `<select data-k="parts.${n}.kind" ${dis}>${opts(['', '故障', '不良', '予防'], p.kind || '')}</select>` : ''}
+        ${editable ? `<button class="del" data-act="delpart" data-n="${n}" aria-label="削除">×</button>` : '<span></span>'}
+      </div>`).join('') +
+      (editable && data.parts.length < 10 ? '<button class="btn small" data-act="addpart">＋ 部品を追加</button>' : '');
+  }
+
+  const nameOpts = v => `<option value=""></option>` + opts(names, v);
+  html += `<div class="grid2" style="margin-top:14px">
       <label>検査員1<select data-k="inspectors.0" ${dis}>${nameOpts(data.inspectors[0])}</select></label>
       <label>検査員2<select data-k="inspectors.1" ${dis}>${nameOpts(data.inspectors[1])}</select></label>
     </div>
-    <label>記事（1行が報告書の1行。最大9行）<textarea data-k="note" ${dis}>${h(data.note)}</textarea></label>
-    <p class="muted">誤差は「(測定値−基準)÷スパン」の目安です。精度を超えると赤字になります。正式な値はExcelで計算されます。</p>`;
+    <label>記事（1行が報告書の1行）<textarea data-k="note" ${dis}>${h(data.note)}</textarea></label>
+    ${i.chs && i.chs.length ? '<p class="muted">誤差は「(測定値−基準)÷スパン」の目安です。精度を超えると赤字になります。正式な値はExcelで計算されます。</p>' : ''}`;
   return html;
 }
 
@@ -432,9 +521,9 @@ function updateDevs(d, data) {
     const [, k, key, i] = el.dataset.dev.split('.');
     const ch = d.info.chs[k];
     const p = ch && ch.points[i];
-    const v = parseFloat(data.ch[k][key][i]);
-    if (!p || isNaN(v) || p.expect == null || !ch.span) { el.textContent = ''; el.className = 'dev'; return; }
-    const dev = (v - p.expect) / ch.span * 100;
+    const v = data.ch[k][key][i];
+    if (!p || !isNum(v) || !isNum(p.expect) || !ch.span) { el.textContent = ''; el.className = 'dev'; return; }
+    const dev = (+v - +p.expect) / ch.span * 100;
     el.textContent = (dev > 0 ? '+' : '') + dev.toFixed(2) + '%';
     el.className = 'dev' + (d.info.accuracy != null && Math.abs(dev) > d.info.accuracy + 1e-9 ? ' ng' : '');
   });
@@ -462,7 +551,7 @@ async function startWork(reopen) {
 }
 
 async function releaseWork() {
-  if (!confirm('作業をやめてロックを解除します。入力済みの値はサーバーに保存され、他の人も入力できるようになります。')) return;
+  if (!confirm('作業を中断してロックを解除します。入力済みの値はサーバーに保存され、他の人も入力できるようになります。')) return;
   const id = view.id;
   try {
     const dr = drafts[id];
@@ -474,6 +563,18 @@ async function releaseWork() {
     view.screen = 'list';
   } catch (e) {
     alert(e.code === 'offline' ? 'ロック解除には電波が必要です。' : e.message);
+  }
+  render();
+}
+
+async function forceRelease() {
+  const d = getDev(view.id);
+  if (!confirm(`${d.worker} さんの作業を強制的に解除します。\n${d.worker} さんのiPhoneに未送信の入力が残っている場合、その人は「作業を再開」が必要になります。\n本人に確認しましたか？`)) return;
+  try {
+    const j = await api('forceRelease', { id: d.id });
+    updateDevice(j.device);
+  } catch (e) {
+    alert(e.code === 'offline' ? '強制解除には電波が必要です。' : e.message);
   }
   render();
 }
@@ -490,6 +591,14 @@ async function finishWork() {
   alert(drafts[view.id] ? 'この端末に保存しました。電波が戻ると自動で送信されます。' : '送信しました。');
   view.screen = 'list';
   render();
+}
+
+function editParts(fn) {
+  const dr = drafts[view.id];
+  if (!dr) return;
+  fn(dr.data.parts);
+  touchDraft(view.id);
+  renderDetail();
 }
 
 // ---- イベント ----
@@ -520,7 +629,10 @@ document.addEventListener('click', async e => {
   else if (act === 'start') startWork(false);
   else if (act === 'reopen') { if (confirm('完了済みの機器を修正のため再開します。よろしいですか？')) startWork(true); }
   else if (act === 'release') releaseWork();
+  else if (act === 'force') forceRelease();
   else if (act === 'finish') finishWork();
+  else if (act === 'addpart') editParts(p => p.push({ name: '', qty: '', kind: '' }));
+  else if (act === 'delpart') editParts(p => p.splice(+b.dataset.n, 1));
 });
 
 function onEdit(e) {
@@ -531,15 +643,23 @@ function onEdit(e) {
   const dr = drafts[view.id];
   if (!dr || t.disabled) return;
   setPath(dr.data, k, t.type === 'checkbox' ? t.checked : t.value);
+  const clock = k.match(/^panels\.(\d+)\.clock(Dir|Min)$/);
+  if (clock) {
+    const p = dr.data.panels[clock[1]];
+    p.items[2] = clockText(p);
+    const pt = document.querySelector(`[data-ptext="${clock[1]}"]`);
+    if (pt) pt.textContent = p.items[2];
+  }
   touchDraft(view.id);
-  if (t.type === 'checkbox') renderDetail();
-  else if (t.dataset.k.startsWith('ch.')) updateDevs(getDev(view.id), dr.data);
+  if (t.type === 'checkbox' || (clock && clock[2] === 'Dir')) renderDetail();
+  else if (k.startsWith('ch.')) updateDevs(getDev(view.id), dr.data);
 }
 document.addEventListener('input', onEdit);
 document.addEventListener('change', e => { if (e.target.tagName === 'SELECT' || e.target.type === 'checkbox' || e.target.type === 'date') onEdit(e); });
 
-// 数値キーボードにはマイナスが無いため、キーボードの上に「±」「前へ」「次へ」のバーを出す
+// 数値キーボードにはマイナスや文字が無いため、キーボードの上に「±」「CLOSE」などのバーを出す
 const kb = $('#kbbar');
+const kbpre = $('#kbpre');
 let activeNum = null;
 function placeKb() {
   const vv = window.visualViewport;
@@ -547,7 +667,12 @@ function placeKb() {
   kb.style.top = top + 'px';
 }
 document.addEventListener('focusin', e => {
-  if (e.target.matches('input.num')) { activeNum = e.target; kb.hidden = false; placeKb(); }
+  if (!e.target.matches('input.num')) return;
+  activeNum = e.target;
+  const pre = (activeNum.dataset.presets || '').split(',').filter(Boolean);
+  kbpre.innerHTML = pre.map(v => `<button type="button" data-kb="preset" data-v="${h(v)}">${h(v)}</button>`).join('');
+  kb.hidden = false;
+  placeKb();
 });
 document.addEventListener('focusout', () => setTimeout(() => {
   if (!document.activeElement || !document.activeElement.matches('input.num')) { kb.hidden = true; activeNum = null; }
@@ -562,10 +687,13 @@ kb.addEventListener('click', e => {
   if (!b || !activeNum) return;
   const inputs = [...document.querySelectorAll('input.num:not(:disabled)')];
   const idx = inputs.indexOf(activeNum);
+  const set = v => { activeNum.value = v; activeNum.dispatchEvent(new Event('input', { bubbles: true })); };
   if (b.dataset.kb === 'sign') {
     const v = activeNum.value.trim();
-    activeNum.value = v.startsWith('-') ? v.slice(1) : '-' + v;
-    activeNum.dispatchEvent(new Event('input', { bubbles: true }));
+    set(v.startsWith('-') ? v.slice(1) : '-' + v);
+  } else if (b.dataset.kb === 'preset') {
+    set(b.dataset.v);
+    if (inputs[idx + 1]) inputs[idx + 1].focus();
   } else if (b.dataset.kb === 'next' && inputs[idx + 1]) inputs[idx + 1].focus();
   else if (b.dataset.kb === 'prev' && inputs[idx - 1]) inputs[idx - 1].focus();
   else if (b.dataset.kb === 'done') activeNum.blur();
