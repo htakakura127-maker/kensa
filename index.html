@@ -164,7 +164,7 @@ async function api(action, body, conn) {
     if (j.code === 'auth' && !conn && cfg && cfg.key) {
       cfg.key = '';
       store.set('cfg', cfg);
-      setTimeout(() => { alert('合言葉が変更されました。新しい設定コードで設定し直してください（入力中のデータは残っています）。'); render(); }, 0);
+      setTimeout(() => { alert('合言葉が変更されました。新しい合言葉を入力してください（入力中のデータは残っています）。'); render(); }, 0);
     }
     throw Object.assign(new Error(j.error), { code: j.code });
   }
@@ -179,11 +179,15 @@ function parseSetupCode(raw) {
   if (!m) return { api: s, key: '' };
   try {
     const o = JSON.parse(atob(m[1].replace(/-/g, '+').replace(/_/g, '/')));
-    return { api: o.u, key: o.k };
+    return { api: o.u, key: o.k || '' };
   } catch (e) {
     return null;
   }
 }
+
+// 合言葉の表記ゆれを吸収する（「abcd-2345」のハイフン、空白、大文字、全角）
+const normKey = v => v.replace(/[Ａ-Ｚａ-ｚ０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+  .replace(/[\s\-‐－ー―]/g, '').toLowerCase();
 
 function setOnline(v) { online = v; renderNet(); }
 
@@ -345,22 +349,32 @@ function renderNet() {
 
 function renderSetup() {
   renderTop('検査入力 初期設定');
-  const connected = cfg && cfg.api && cfg.key;
-  // 接続済みなら合言葉は画面に出さず、名前選びだけを表示する
+  const hasApi = cfg && cfg.api;
+  const connected = hasApi && cfg.key;
+  const keyField = `<label>合言葉<input id="s-key" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="例：abcd-2345"></label>`;
+  // 接続済みなら合言葉は画面に出さず、名前選びだけを表示する。
+  // 設定コード（URL）は覚えていて合言葉だけ無い＝合言葉が変わった場合は、合言葉の欄だけを出す
   $('#app').innerHTML = connected ? `
     <section class="card">
       <h2>名前を選ぶ</h2>
       <div class="notice done">サーバーに接続済みです。</div>
       <div id="s-names"></div>
       <button class="btn small" data-act="resetconn" style="margin-top:24px">接続設定をやり直す</button>
+    </section>` : hasApi ? `
+    <section class="card">
+      <h2>合言葉の入力</h2>
+      <p class="muted">合言葉が変更された場合は、新しい合言葉を事務所の担当者に確認してください。</p>
+      ${keyField}
+      <button class="btn primary" data-act="connect">接続して名前を選ぶ</button>
+      <button class="btn small" data-act="resetconn" style="margin-top:24px">設定コードの貼り付けからやり直す</button>
     </section>` : `
     <section class="card">
       <h2>初期設定</h2>
       <label>設定コード<textarea id="s-code" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" style="min-height:90px" placeholder="KENSA1: で始まるコードを貼り付け"></textarea></label>
-      <label>合言葉（設定コードを貼った場合は不要）<input id="s-key" type="password" autocomplete="off" autocapitalize="off" autocorrect="off"></label>
+      ${keyField}
       <button class="btn primary" data-act="connect">接続して名前を選ぶ</button>
     </section>
-    <p class="muted">設定コードは事務所の担当者から受け取ってください。社外の人に見せないでください。</p>
+    <p class="muted">設定コードと合言葉は事務所の担当者から受け取ってください。社外の人に見せないでください。</p>
     <p class="muted">Safari の共有ボタン →「ホーム画面に追加」で、圏外でもアプリとして開けるようになります。ホーム画面のアイコンから開いて設定してください。</p>`;
   if (connected) renderNames();
 }
@@ -640,13 +654,16 @@ document.addEventListener('click', async e => {
   if (act === 'back') { view.screen = 'list'; render(); refresh(true); }
   else if (act === 'sync') { await sync(); if (ready()) await refresh(); }
   else if (act === 'connect') {
-    const raw = $('#s-code').value.trim();
-    const parsed = parseSetupCode(raw);
-    // 途中で切れている等の調査用に、貼り付けた文字数と先頭を表示する（合言葉が見えない範囲のみ）
-    const bad = () => alert(`設定コードが正しくありません。もう一度コピーして貼り付けてください。\n（貼り付けた文字数：${raw.length}、先頭：${raw.slice(0, 10)}…）\n正しいコードは「KENSA1:」で始まる約190文字です。`);
-    if (!parsed) return bad();
-    const key = parsed.key || $('#s-key').value.trim();
-    if (!/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(parsed.api)) return bad();
+    let parsed = { api: cfg && cfg.api, key: '' };
+    const codeEl = $('#s-code');
+    if (codeEl) {
+      const raw = codeEl.value.trim();
+      parsed = parseSetupCode(raw);
+      // 途中で切れている等の調査用に、貼り付けた文字数と先頭を表示する
+      const bad = () => alert(`設定コードが正しくありません。もう一度コピーして貼り付けてください。\n（貼り付けた文字数：${raw.length}、先頭：${raw.slice(0, 10)}…）\n正しいコードは「KENSA1:」で始まる約170文字です。`);
+      if (!parsed || !/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(parsed.api)) return bad();
+    }
+    const key = normKey($('#s-key').value) || parsed.key;
     if (!key) return alert('合言葉を入力してください。');
     const conn = { api: parsed.api, key, name: '' };
     try {
@@ -660,7 +677,7 @@ document.addEventListener('click', async e => {
   }
   else if (act === 'resetconn') {
     if (Object.values(drafts).some(d => d.pending)) return alert('未送信のデータがあります。送信してからやり直してください。');
-    if (!confirm('接続設定を消して、設定コードの入力からやり直します。よろしいですか？')) return;
+    if (!confirm('接続設定を消して、設定コードの貼り付けからやり直します。よろしいですか？')) return;
     cfg = null; store.set('cfg', cfg); render();
   }
   else if (act === 'pickname') { cfg.name = b.dataset.name; store.set('cfg', cfg); await refresh(true); render(); sync(); }
