@@ -1,4 +1,21 @@
-# 電流モニター（Apps Script）
+# 電流モニター
+
+## おすすめ：ホーム画面からワンタップ（Cloudflare Workers）
+
+`worker.js` を Cloudflare Workers（無料）に置くと、その URL が電流ライブ画面になる。Safari で開いて「ホーム画面に追加」すれば、アイコン1タップで表示できる。
+
+1. dash.cloudflare.com で無料アカウントを作る
+2. 「Workers & Pages」→「Create」→ Hello World から作成（名前は denryu など）→ Deploy
+3. 「Edit code」で中身を全部 `worker.js` に置き換えて Deploy
+4. https://denryu.〇〇.workers.dev を Safari で開き、共有 →「ホーム画面に追加」
+
+Worker がログインを使い回してグラフページを取得し、最新点だけを JSON で画面に渡す。画面は1秒ごとに取得する（前の取得の完了は待たない）。
+
+## ブックマークレット版
+
+`live-bookmarklet.txt` を Safari のブックマークの URL に貼り、installer.egvw.informetis.com を開いた状態でアドレスバーから呼び出す。
+
+## Apps Script 版
 
 Informetis の CH1 / CH2 電力を、遅れを減らして表示する Apps Script 用ファイルです。
 
