@@ -10,7 +10,6 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-180.png">
 <title>検査入力</title>
-<script src="config.js"></script>
 <style>
 :root {
   --bg: #f3f5f8; --card: #fff; --ink: #1d2733; --sub: #5d6b7a; --line: #d5dbe3;
@@ -111,7 +110,6 @@ table.pt input { width: 100%; text-align: right; padding: 8px 5px; }
 </div>
 <script>
 'use strict';
-const API = window.KENSA_API || '';
 const $ = s => document.querySelector(s);
 const h = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const clone = o => JSON.parse(JSON.stringify(o));
@@ -123,7 +121,7 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem('kensa.' + k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
   set(k, v) { try { localStorage.setItem('kensa.' + k, JSON.stringify(v)); } catch (e) { alert('端末への保存に失敗しました: ' + e.message); } },
 };
-let cfg = store.get('cfg', null);          // { key, name }
+let cfg = store.get('cfg', null);          // { api, key, name }（サーバーURLは公開ファイルに置かず、設定コードで端末に保存）
 let names = store.get('names', []);
 let devices = store.get('devices', []);
 let fetchedAt = store.get('fetchedAt', '');
@@ -144,21 +142,45 @@ const isNum = v => v !== null && v !== '' && !isNaN(+v);
 const fmt = v => v == null || v === '' ? '' : isNum(v) ? String(+(+v).toFixed(4)) : String(v);
 
 // ---- サーバー通信 ----
-async function api(action, body) {
-  if (!API) throw Object.assign(new Error('config.js にサーバーのURLが設定されていません'), { code: 'config' });
+const ready = () => !!(cfg && cfg.api && cfg.key && cfg.name);
+
+// conn: 接続先と合言葉（初期設定の接続確認では、保存前の値を渡す）
+async function api(action, body, conn) {
+  const c = conn || cfg;
+  if (!c || !c.api || !c.key) throw Object.assign(new Error('初期設定が済んでいません'), { code: 'config' });
   let res;
   try {
     // Content-Type を付けない（text/plain）ことで、事前確認なしで Apps Script に送れる
-    res = await fetch(API, { method: 'POST', body: JSON.stringify(Object.assign({ action, key: cfg && cfg.key, name: cfg && cfg.name }, body)) });
+    res = await fetch(c.api, { method: 'POST', body: JSON.stringify(Object.assign({ action, key: c.key, name: c.name }, body)) });
   } catch (e) {
     setOnline(false);
     throw Object.assign(new Error('通信できません（圏外の可能性があります）'), { code: 'offline' });
   }
   setOnline(true);
   let j;
-  try { j = await res.json(); } catch (e) { throw Object.assign(new Error('サーバーの応答が読めません'), { code: 'bad' }); }
-  if (!j.ok) throw Object.assign(new Error(j.error), { code: j.code });
+  try { j = await res.json(); } catch (e) { throw Object.assign(new Error('サーバーの応答が読めません。設定コードが古い可能性があります'), { code: 'bad' }); }
+  if (!j.ok) {
+    // 保存済みの合言葉が通らない＝合言葉が変更された。入力中のデータは残したまま再設定してもらう
+    if (j.code === 'auth' && !conn && cfg && cfg.key) {
+      cfg.key = '';
+      store.set('cfg', cfg);
+      setTimeout(() => { alert('合言葉が変更されました。新しい設定コードで設定し直してください（入力中のデータは残っています）。'); render(); }, 0);
+    }
+    throw Object.assign(new Error(j.error), { code: j.code });
+  }
   return j;
+}
+
+// 設定コード「KENSA1:<base64>」を { api, key } に戻す。URLだけを貼った場合はそのまま使う
+function parseSetupCode(raw) {
+  const m = raw.match(/^KENSA1:([A-Za-z0-9_-]+=*)$/);
+  if (!m) return { api: raw, key: '' };
+  try {
+    const o = JSON.parse(atob(m[1].replace(/-/g, '+').replace(/_/g, '/')));
+    return { api: o.u, key: o.k };
+  } catch (e) {
+    return null;
+  }
 }
 
 function setOnline(v) { online = v; renderNet(); }
@@ -185,7 +207,6 @@ async function refresh(quiet) {
         cfg.name = '';
         store.set('cfg', cfg);
         render();
-        renderNames();
         return;
       }
     }
@@ -197,7 +218,7 @@ async function refresh(quiet) {
 
 // 未送信の入力を順に送る。失敗しても端末に残し、次の機会に再送する
 async function sync() {
-  if (syncing || !cfg) return;
+  if (syncing || !ready()) return;
   syncing = true;
   try {
     for (const id of Object.keys(drafts)) {
@@ -213,7 +234,7 @@ async function sync() {
         }
         saveDrafts();
       } catch (e) {
-        if (['offline', 'busy', 'bad', 'auth', 'config'].includes(e.code)) break;
+        if (['offline', 'busy', 'bad', 'auth', 'config', 'blocked'].includes(e.code)) break;
         dr.blocked = e.message;  // ロックを失った等。データは残してユーザーに知らせる
         saveDrafts();
       }
@@ -231,12 +252,12 @@ function scheduleSync(ms) {
 }
 
 setInterval(async () => {
-  if (!cfg || !cfg.name) return;
+  if (!ready()) return;
   await sync();
   if (view.screen === 'list' && document.visibilityState === 'visible') refresh(true);
 }, 30000);
 window.addEventListener('online', () => sync());
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && cfg && cfg.name) { sync(); if (view.screen === 'list') refresh(true); } });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && ready()) { sync(); if (view.screen === 'list') refresh(true); } });
 
 // ---- データ ----
 function emptyCh() { return { up: ['', '', '', '', ''], down: ['', '', '', '', ''], adj: false, adjUp: ['', '', '', '', ''], adjDown: ['', '', '', '', ''] }; }
@@ -302,7 +323,7 @@ function countBlanks(d, data) {
 
 // ---- 画面 ----
 function render() {
-  if (!cfg || !cfg.name) return renderSetup();
+  if (!ready()) return renderSetup();
   if (view.screen === 'detail') return renderDetail();
   renderList();
 }
@@ -322,16 +343,24 @@ function renderNet() {
 
 function renderSetup() {
   renderTop('検査入力 初期設定');
-  $('#app').innerHTML = `
+  const connected = cfg && cfg.api && cfg.key;
+  // 接続済みなら合言葉は画面に出さず、名前選びだけを表示する
+  $('#app').innerHTML = connected ? `
+    <section class="card">
+      <h2>名前を選ぶ</h2>
+      <div class="notice done">サーバーに接続済みです。</div>
+      <div id="s-names"></div>
+      <button class="btn small" data-act="resetconn" style="margin-top:24px">接続設定をやり直す</button>
+    </section>` : `
     <section class="card">
       <h2>初期設定</h2>
-      ${API ? '' : '<div class="notice err">config.js にサーバーのURLが設定されていません</div>'}
-      <label>合言葉<input id="s-key" autocomplete="off" autocapitalize="off" autocorrect="off" value="${h(cfg ? cfg.key : '')}"></label>
+      <label>設定コード<textarea id="s-code" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" style="min-height:90px" placeholder="KENSA1: で始まるコードを貼り付け"></textarea></label>
+      <label>合言葉（設定コードを貼った場合は不要）<input id="s-key" type="password" autocomplete="off" autocapitalize="off" autocorrect="off"></label>
       <button class="btn primary" data-act="connect">接続して名前を選ぶ</button>
-      <div id="s-names" style="margin-top:14px"></div>
     </section>
+    <p class="muted">設定コードは事務所の担当者から受け取ってください。社外の人に見せないでください。</p>
     <p class="muted">Safari の共有ボタン →「ホーム画面に追加」で、圏外でもアプリとして開けるようになります。ホーム画面のアイコンから開いて設定してください。</p>`;
-  if (cfg && names.length) renderNames();
+  if (connected) renderNames();
 }
 
 function renderNames() {
@@ -607,18 +636,29 @@ document.addEventListener('click', async e => {
   if (!b) return;
   const act = b.dataset.act;
   if (act === 'back') { view.screen = 'list'; render(); refresh(true); }
-  else if (act === 'sync') { await sync(); if (cfg && cfg.name) await refresh(); }
+  else if (act === 'sync') { await sync(); if (ready()) await refresh(); }
   else if (act === 'connect') {
-    const key = $('#s-key').value.trim();
+    const parsed = parseSetupCode($('#s-code').value.trim());
+    if (!parsed) return alert('設定コードが正しくありません。もう一度コピーして貼り付けてください。');
+    const key = parsed.key || $('#s-key').value.trim();
+    if (!/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(parsed.api)) return alert('設定コードが正しくありません。もう一度コピーして貼り付けてください。');
+    if (!key) return alert('合言葉を入力してください。');
+    const conn = { api: parsed.api, key, name: '' };
     try {
-      const j = await api('hello', { key });
-      cfg = { key, name: '' };
+      const j = await api('hello', {}, conn);
+      cfg = conn;
+      store.set('cfg', cfg);
       names = j.names;
       store.set('names', names);
-      renderNames();
+      render();
     } catch (err) { alert(err.message); }
   }
-  else if (act === 'pickname') { cfg.name = b.dataset.name; store.set('cfg', cfg); await refresh(true); render(); }
+  else if (act === 'resetconn') {
+    if (Object.values(drafts).some(d => d.pending)) return alert('未送信のデータがあります。送信してからやり直してください。');
+    if (!confirm('接続設定を消して、設定コードの入力からやり直します。よろしいですか？')) return;
+    cfg = null; store.set('cfg', cfg); render();
+  }
+  else if (act === 'pickname') { cfg.name = b.dataset.name; store.set('cfg', cfg); await refresh(true); render(); sync(); }
   else if (act === 'logout') {
     if (Object.values(drafts).some(d => d.pending)) return alert('未送信のデータがあります。送信してから変更してください。');
     cfg.name = ''; store.set('cfg', cfg); render();
@@ -700,7 +740,7 @@ kb.addEventListener('click', e => {
 });
 
 render();
-if (cfg && cfg.name) { sync(); refresh(true); }
+if (ready()) { sync(); refresh(true); }
 </script>
 </body>
 </html>
