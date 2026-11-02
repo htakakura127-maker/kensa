@@ -72,6 +72,22 @@ table.pt td.ref { color: var(--sub); font-size: 13px; padding-top: 12px; overflo
 table.pt input { width: 100%; text-align: right; padding: 8px 5px; }
 .dev { font-size: 11px; color: var(--sub); text-align: right; min-height: 14px; }
 .dev.ng { color: var(--ng); font-weight: 700; }
+/* 入力欄の下の小さい行：左に前回値（入力しても消えない）、右に誤差 */
+.hint { display: flex; justify-content: space-between; gap: 2px; font-size: 10.5px; line-height: 1.3; min-height: 14px; margin-top: 1px; }
+.hint .prev { color: #8a96a3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hint .dev { font-size: inherit; min-height: 0; white-space: nowrap; }
+/* 工場・場所のメニュー */
+.sect { font-size: 14px; color: var(--sub); margin: 16px 0 8px; font-weight: 700; }
+.menu { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-bottom: 8px; }
+.menu .main { flex: 1; min-width: 0; }
+.menu .name { font-weight: 700; font-size: 17px; }
+.menu .sub { font-size: 12px; color: var(--work); }
+.menu .chev { color: var(--sub); font-size: 20px; }
+.prog { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.prog .bar { flex: 1; height: 8px; border-radius: 99px; background: #e4e8ee; overflow: hidden; }
+.prog .bar i { display: block; height: 100%; background: var(--done); }
+.prog .cnt { font-size: 14px; font-weight: 700; min-width: 64px; text-align: right; }
+.prog.full .cnt { color: var(--done); }
 .chk { display: flex; align-items: center; gap: 8px; color: var(--ink); font-size: 15px; margin: 6px 0 12px; }
 .chk input { width: 22px; height: 22px; min-height: 0; margin: 0; }
 .names { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
@@ -126,7 +142,10 @@ let names = store.get('names', []);
 let devices = store.get('devices', []);
 let fetchedAt = store.get('fetchedAt', '');
 let drafts = store.get('drafts', {});      // 機器id → { data, rev, pending, finish, blocked }
-let view = { screen: 'list', id: null, filter: store.get('filter', 'all'), q: '' };
+// 画面の階層：plants（工場）→ locs（場所）→ list（機器）→ detail（入力）。選んだ工場・場所は次回も開く
+const nav = store.get('nav', {});
+let view = { screen: nav.plant ? (nav.loc ? 'list' : 'locs') : 'plants', plant: nav.plant || null, loc: nav.loc || null, from: null, id: null, filter: store.get('filter', 'all'), q: '' };
+const saveNav = () => store.set('nav', { plant: view.plant, loc: view.loc });
 let online = true;
 let syncing = false;
 let syncTimer = null;
@@ -219,7 +238,7 @@ async function refresh(quiet) {
   } catch (e) {
     if (!quiet) alert(e.message);
   }
-  if (view.screen === 'list') render();
+  if (view.screen !== 'detail') render();
 }
 
 // 未送信の入力を順に送る。失敗しても端末に残し、次の機会に再送する
@@ -248,7 +267,7 @@ async function sync() {
   } finally {
     syncing = false;
     renderNet();
-    if (view.screen === 'list') render();
+    if (ready() && view.screen !== 'detail') render();
   }
 }
 
@@ -260,10 +279,10 @@ function scheduleSync(ms) {
 setInterval(async () => {
   if (!ready()) return;
   await sync();
-  if (view.screen === 'list' && document.visibilityState === 'visible') refresh(true);
+  if (view.screen !== 'detail' && document.visibilityState === 'visible') refresh(true);
 }, 30000);
 window.addEventListener('online', () => sync());
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && ready()) { sync(); if (view.screen === 'list') refresh(true); } });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && ready()) { sync(); if (view.screen !== 'detail') refresh(true); } });
 
 // ---- データ ----
 function emptyCh() { return { up: ['', '', '', '', ''], down: ['', '', '', '', ''], adj: false, adjUp: ['', '', '', '', ''], adjDown: ['', '', '', '', ''] }; }
@@ -331,12 +350,77 @@ function countBlanks(d, data) {
 function render() {
   if (!ready()) return renderSetup();
   if (view.screen === 'detail') return renderDetail();
+  // 選んでいた工場が一覧から無くなった（名前変更など）ときは工場選択に戻す
+  if (view.screen !== 'plants' && devices.length && !devices.some(d => plantOf(d) === view.plant)) view.screen = 'plants';
+  if (view.screen === 'plants') return renderPlants();
+  if (view.screen === 'locs') return renderLocs();
   renderList();
 }
 
+const BACK_LABEL = { plants: '工場', locs: '場所', list: '一覧' };
+
 function renderTop(title, back) {
-  $('#top').innerHTML = `${back ? '<button class="back" data-act="back">‹ 一覧</button>' : ''}<div class="ttl">${h(title)}</div><button class="net" id="net" data-act="sync"></button>`;
+  $('#top').innerHTML = `${back ? `<button class="back" data-act="back">‹ ${h(back)}</button>` : ''}<div class="ttl">${h(title)}</div><button class="net" id="net" data-act="sync"></button>`;
   renderNet();
+}
+
+// ---- 工場・場所のメニュー ----
+const ALL = '__all__';
+const plantOf = d => d.plant || '（工場名なし）';
+const locOf = d => (d.info && d.info.loc) || '場所未設定';
+const isDone = d => ['done', 'pend'].includes(localStatus(d).cls);
+const byName = (a, b) => a.localeCompare(b, 'ja', { numeric: true });
+
+function progress(list) {
+  const done = list.filter(isDone).length;
+  const pct = list.length ? Math.round(done / list.length * 100) : 0;
+  return `<div class="prog ${list.length && done === list.length ? 'full' : ''}"><div class="bar"><i style="width:${pct}%"></i></div><span class="cnt">完了 ${done}/${list.length}</span></div>`;
+}
+
+function menuItem(act, key, name, list) {
+  const work = list.filter(d => d.status === ST.WORK).length;
+  return `<button class="menu" data-act="${act}" data-key="${h(key)}">
+    <div class="main"><div class="name">${h(name)}</div>${progress(list)}${work ? `<div class="sub">作業中 ${work}台</div>` : ''}</div>
+    <span class="chev">›</span></button>`;
+}
+
+// 自分が作業中・未送信の機器は、どの画面からでもすぐ戻れるよう上に出す
+function mineSection(list) {
+  const mine = list.filter(d => (d.status === ST.WORK && d.worker === cfg.name) || (drafts[d.id] && drafts[d.id].pending));
+  return mine.length ? `<div class="sect">自分の作業中</div>${mine.map(itemButton).join('')}` : '';
+}
+
+function itemButton(d) {
+  const s = localStatus(d);
+  const mine = d.status === ST.WORK && d.worker === cfg.name;
+  return `<button class="item ${mine ? 'mine' : ''}" data-act="open" data-id="${h(d.id)}">
+    <div class="main"><div class="tag">${h(d.tag)}</div><div class="sub">${h(d.title)}</div></div>
+    <span class="badge st-${s.cls}">${h(s.text)}</span></button>`;
+}
+
+function renderPlants() {
+  renderTop(`検査入力（${cfg.name}）`);
+  const plants = [...new Set(devices.map(plantOf))].sort(byName);
+  $('#app').innerHTML = `
+    ${mineSection(devices)}
+    <div class="sect">工場を選ぶ</div>
+    ${plants.map(p => menuItem('plant', p, p, devices.filter(d => plantOf(d) === p))).join('') || '<p class="muted">機器が登録されていません</p>'}
+    <div class="muted">更新 ${h(hm(fetchedAt))}</div>
+    <button class="btn" data-act="refresh">一覧を更新</button>
+    <button class="btn" data-act="logout" style="margin-top:24px">名前を変更する</button>`;
+}
+
+function renderLocs() {
+  const inPlant = devices.filter(d => plantOf(d) === view.plant);
+  renderTop(view.plant, BACK_LABEL.plants);
+  const locs = [...new Set(inPlant.map(locOf))].sort(byName);
+  $('#app').innerHTML = `
+    ${mineSection(inPlant)}
+    <div class="sect">場所を選ぶ</div>
+    ${menuItem('loc', ALL, 'すべての機器', inPlant)}
+    ${locs.map(l => menuItem('loc', l, l, inPlant.filter(d => locOf(d) === l))).join('')}
+    <div class="muted">更新 ${h(hm(fetchedAt))}</div>
+    <button class="btn" data-act="refresh">一覧を更新</button>`;
 }
 
 function renderNet() {
@@ -389,7 +473,8 @@ function renderNames() {
 const FILTERS = { all: 'すべて', mine: '自分', todo: '未着手', work: '作業中', done: '完了' };
 
 function renderList() {
-  renderTop(`検査入力（${cfg.name}）`);
+  const scope = devices.filter(d => plantOf(d) === view.plant && (view.loc === ALL || locOf(d) === view.loc));
+  renderTop(view.loc === ALL ? 'すべての機器' : view.loc, BACK_LABEL.locs);
   const q = view.q.trim().toLowerCase();
   const match = d => {
     const st = d.status;
@@ -400,24 +485,18 @@ function renderList() {
     if (view.filter === 'done' && st !== ST.DONE) return false;
     return !q || (d.tag + ' ' + d.title + ' ' + (d.info.name || '')).toLowerCase().includes(q);
   };
-  const counts = Object.fromEntries(Object.values(ST).map(s => [s, devices.filter(d => d.status === s).length]));
+  const counts = Object.fromEntries(Object.values(ST).map(s => [s, scope.filter(d => d.status === s).length]));
   const groups = {};
-  devices.filter(match).forEach(d => (groups[d.file] = groups[d.file] || []).push(d));
+  scope.filter(match).forEach(d => (groups[d.file] = groups[d.file] || []).push(d));
   $('#app').innerHTML = `
-    <div class="filters">${Object.entries(FILTERS).map(([k, v]) => `<button class="${view.filter === k ? 'on' : ''}" data-act="filter" data-f="${k}">${v}</button>`).join('')}</div>
+    ${progress(scope)}
+    <div class="filters" style="margin-top:10px">${Object.entries(FILTERS).map(([k, v]) => `<button class="${view.filter === k ? 'on' : ''}" data-act="filter" data-f="${k}">${v}</button>`).join('')}</div>
     <input class="search" id="q" type="search" placeholder="タグ・名称で検索" value="${h(view.q)}">
     <div class="muted">未着手 ${counts[ST.TODO]} ／ 作業中 ${counts[ST.WORK]} ／ 完了 ${counts[ST.DONE]}　<span>更新 ${h(hm(fetchedAt))}</span></div>
     ${Object.entries(groups).map(([file, list]) => `
       <div class="group">${h(file)}</div>
-      ${list.map(d => {
-        const s = localStatus(d);
-        const mine = d.status === ST.WORK && d.worker === cfg.name;
-        return `<button class="item ${mine ? 'mine' : ''}" data-act="open" data-id="${h(d.id)}">
-          <div class="main"><div class="tag">${h(d.tag)}</div><div class="sub">${h(d.title)}</div></div>
-          <span class="badge st-${s.cls}">${h(s.text)}</span></button>`;
-      }).join('')}`).join('') || '<p class="muted">該当する機器がありません</p>'}
-    <button class="btn" data-act="refresh">一覧を更新</button>
-    <button class="btn" data-act="logout" style="margin-top:24px">名前を変更する</button>`;
+      ${list.map(itemButton).join('')}`).join('') || '<p class="muted">該当する機器がありません</p>'}
+    <button class="btn" data-act="refresh">一覧を更新</button>`;
 }
 
 function infoCard(d) {
@@ -437,8 +516,8 @@ function infoCard(d) {
 
 function renderDetail() {
   const d = getDev(view.id);
-  if (!d) { view.screen = 'list'; return render(); }
-  renderTop(d.tag, true);
+  if (!d) { leaveDetail(); return render(); }
+  renderTop(d.tag, BACK_LABEL[view.from] || BACK_LABEL.list);
   const mine = d.status === ST.WORK && d.worker === cfg.name;
   if (mine && !drafts[d.id]) { drafts[d.id] = { data: normalize(d, d.data), rev: 0, pending: false }; saveDrafts(); }
   const dr = drafts[d.id];
@@ -476,8 +555,11 @@ function renderDetail() {
 // ---- 入力フォーム ----
 const opts = (list, v) => (list.includes(v) || !v ? list : list.concat([v])).map(x => `<option ${x === v ? 'selected' : ''}>${h(x)}</option>`).join('');
 
-function numInput(path, val, placeholder, editable, presets) {
-  return `<input class="num" inputmode="decimal" autocomplete="off" data-k="${path}" value="${h(val)}" placeholder="${h(fmt(placeholder))}"${presets ? ` data-presets="${h(presets)}"` : ''} ${editable ? '' : 'disabled'}><div class="dev" data-dev="${path}"></div>`;
+// prev（前回値）は入力欄の中の薄字に加え、入力後も見えるよう欄の下に小さく出す
+function numInput(path, val, prev, editable, presets) {
+  const p = fmt(prev);
+  return `<input class="num" inputmode="decimal" autocomplete="off" data-k="${path}" value="${h(val)}" placeholder="${h(p)}"${presets ? ` data-presets="${h(presets)}"` : ''} ${editable ? '' : 'disabled'}>
+    <div class="hint"><span class="prev">${p !== '' ? '前 ' + h(p) : ''}</span><span class="dev" data-dev="${path}"></span></div>`;
 }
 
 function pointTable(ch, k, upKey, downKey, c, editable, caption, showPrev) {
@@ -501,7 +583,8 @@ function form(d, data, editable) {
   const showTemp = d.kind !== KIND.VALVE;
   let html = `<div class="grid2">
       ${showDate ? `<label>試験日<input type="date" data-k="date" value="${h(data.date)}" ${dis}></label>` : ''}
-      ${showTemp ? `<label>温度 (℃)<input class="num" inputmode="decimal" data-k="temp" value="${h(data.temp)}" placeholder="${h(fmt(i.prev.temp))}" ${dis}></label>` : ''}
+      ${showTemp ? `<label>温度 (℃)<input class="num" inputmode="decimal" data-k="temp" value="${h(data.temp)}" placeholder="${h(fmt(i.prev.temp))}" ${dis}>
+        <div class="hint"><span class="prev">${i.prev.temp != null ? '前回 ' + h(fmt(i.prev.temp)) + '℃' : ''}</span></div></label>` : ''}
     </div>
     ${showDate ? '' : '<p class="muted">この報告書には試験日の欄がありません。</p>'}`;
 
@@ -526,7 +609,7 @@ function form(d, data, editable) {
     i.chs.forEach((ch, k) => {
       const c = data.ch[k];
       const title = d.kind === KIND.VALVE ? 'ストローク' : (i.chs.length > 1 ? 'CH' + (k + 1) + ' ' : '') + '測定値';
-      html += `<h3>${title} <small>目盛 ${h(ch.scale)}　薄字=前回値</small></h3>`;
+      html += `<h3>${title} <small>目盛 ${h(ch.scale)}　「前」＝前回値</small></h3>`;
       html += pointTable(ch, k, 'up', 'down', c, editable, '調整前', true);
       html += `<label class="chk"><input type="checkbox" data-k="ch.${k}.adj" ${c.adj ? 'checked' : ''} ${dis}>調整した（調整後の値も入力）</label>`;
       if (c.adj) html += pointTable(ch, k, 'adjUp', 'adjDown', c, editable, '調整後', false);
@@ -605,7 +688,7 @@ async function releaseWork() {
     updateDevice(j.device);
     delete drafts[id];
     saveDrafts();
-    view.screen = 'list';
+    leaveDetail();
   } catch (e) {
     alert(e.code === 'offline' ? 'ロック解除には電波が必要です。' : e.message);
   }
@@ -634,8 +717,13 @@ async function finishWork() {
   touchDraft(view.id);
   await sync();
   alert(drafts[view.id] ? 'この端末に保存しました。電波が戻ると自動で送信されます。' : '送信しました。');
-  view.screen = 'list';
+  leaveDetail();
   render();
+}
+
+// 入力画面から、開く前にいた画面（工場・場所・一覧）へ戻る
+function leaveDetail() {
+  view.screen = view.from && view.from !== 'detail' ? view.from : 'list';
 }
 
 function editParts(fn) {
@@ -651,7 +739,15 @@ document.addEventListener('click', async e => {
   const b = e.target.closest('[data-act]');
   if (!b) return;
   const act = b.dataset.act;
-  if (act === 'back') { view.screen = 'list'; render(); refresh(true); }
+  if (act === 'back') {
+    if (view.screen === 'detail') leaveDetail();
+    else view.screen = view.screen === 'list' ? 'locs' : 'plants';
+    render();
+    window.scrollTo(0, 0);
+    refresh(true);
+  }
+  else if (act === 'plant') { view.plant = b.dataset.key; view.loc = null; view.screen = 'locs'; saveNav(); render(); window.scrollTo(0, 0); }
+  else if (act === 'loc') { view.loc = b.dataset.key; view.screen = 'list'; view.q = ''; saveNav(); render(); window.scrollTo(0, 0); }
   else if (act === 'sync') { await sync(); if (ready()) await refresh(); }
   else if (act === 'connect') {
     let parsed = { api: cfg && cfg.api, key: '' };
@@ -687,7 +783,7 @@ document.addEventListener('click', async e => {
   }
   else if (act === 'filter') { view.filter = b.dataset.f; store.set('filter', view.filter); render(); }
   else if (act === 'refresh') refresh();
-  else if (act === 'open') { view.screen = 'detail'; view.id = b.dataset.id; render(); window.scrollTo(0, 0); }
+  else if (act === 'open') { view.from = view.screen; view.screen = 'detail'; view.id = b.dataset.id; render(); window.scrollTo(0, 0); }
   else if (act === 'start') startWork(false);
   else if (act === 'reopen') { if (confirm('完了済みの機器を修正のため再開します。よろしいですか？')) startWork(true); }
   else if (act === 'release') releaseWork();
