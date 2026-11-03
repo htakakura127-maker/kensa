@@ -72,11 +72,17 @@ table.pt td.ref { color: var(--sub); font-size: 13px; padding-top: 12px; overflo
 table.pt input { width: 100%; text-align: right; padding: 8px 5px; }
 .dev { font-size: 11px; color: var(--sub); text-align: right; min-height: 14px; }
 .dev.ng { color: var(--ng); font-weight: 700; }
-/* 入力欄の下の小さい行：左に前回値（入力しても消えない）、右に誤差 */
-.hint { display: flex; justify-content: space-between; gap: 2px; font-size: 10.5px; line-height: 1.3; min-height: 14px; margin-top: 1px; }
-.hint .prev { color: #8a96a3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.hint .dev { font-size: inherit; min-height: 0; white-space: nowrap; }
-/* 工場・場所のメニュー */
+/* 入力欄の下の小さい表示：1行目に前回値（入力しても消えない）、2行目に誤差。横に並べると狭い画面で重なるため縦に積む */
+.hint { display: flex; flex-direction: column; font-size: 10.5px; line-height: 1.35; margin-top: 1px; }
+.hint .prev { color: #8a96a3; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hint .dev { font-size: inherit; min-height: 0; text-align: right; white-space: nowrap; }
+.hint .dev:empty { display: none; }
+/* 選択ダイアログ（中断時など） */
+.modal { position: fixed; inset: 0; z-index: 30; background: rgba(0,0,0,.45); display: flex; align-items: flex-end; justify-content: center; padding: 16px 16px calc(env(safe-area-inset-bottom) + 16px); }
+.modal .box { width: 100%; max-width: 480px; background: #fff; border-radius: 14px; padding: 16px; }
+.modal .msg { font-size: 15px; white-space: pre-wrap; margin-bottom: 6px; }
+.modal .btn.warn { border-color: #f3b4ae; }
+/* 工場・報告書のメニュー */
 .sect { font-size: 14px; color: var(--sub); margin: 16px 0 8px; font-weight: 700; }
 .menu { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-bottom: 8px; }
 .menu .main { flex: 1; min-width: 0; }
@@ -142,7 +148,7 @@ let names = store.get('names', []);
 let devices = store.get('devices', []);
 let fetchedAt = store.get('fetchedAt', '');
 let drafts = store.get('drafts', {});      // 機器id → { data, rev, pending, finish, blocked }
-// 画面の階層：plants（工場）→ locs（場所）→ list（機器）→ detail（入力）。選んだ工場・場所は次回も開く
+// 画面の階層：plants（工場）→ locs（報告書＝Excelファイル）→ list（機器）→ detail（入力）。選んだ工場・報告書は次回も開く
 const nav = store.get('nav', {});
 let view = { screen: nav.plant ? (nav.loc ? 'list' : 'locs') : 'plants', plant: nav.plant || null, loc: nav.loc || null, from: null, id: null, filter: store.get('filter', 'all'), q: '' };
 const saveNav = () => store.set('nav', { plant: view.plant, loc: view.loc });
@@ -350,24 +356,26 @@ function countBlanks(d, data) {
 function render() {
   if (!ready()) return renderSetup();
   if (view.screen === 'detail') return renderDetail();
-  // 選んでいた工場が一覧から無くなった（名前変更など）ときは工場選択に戻す
+  // 選んでいた工場・報告書が一覧から無くなった（名前変更など）ときは一つ上の選択に戻す
   if (view.screen !== 'plants' && devices.length && !devices.some(d => plantOf(d) === view.plant)) view.screen = 'plants';
+  if (view.screen === 'list' && view.loc !== ALL && !devices.some(d => plantOf(d) === view.plant && fileOf(d) === view.loc)) view.screen = 'locs';
   if (view.screen === 'plants') return renderPlants();
   if (view.screen === 'locs') return renderLocs();
   renderList();
 }
 
-const BACK_LABEL = { plants: '工場', locs: '場所', list: '一覧' };
+const BACK_LABEL = { plants: '工場', locs: '報告書', list: '一覧' };
 
 function renderTop(title, back) {
   $('#top').innerHTML = `${back ? `<button class="back" data-act="back">‹ ${h(back)}</button>` : ''}<div class="ttl">${h(title)}</div><button class="net" id="net" data-act="sync"></button>`;
   renderNet();
 }
 
-// ---- 工場・場所のメニュー ----
+// ---- 工場・報告書（Excelファイル）のメニュー ----
 const ALL = '__all__';
 const plantOf = d => d.plant || '（工場名なし）';
-const locOf = d => (d.info && d.info.loc) || '場所未設定';
+const fileOf = d => d.file || '（報告書名なし）';
+const fileLabel = f => f.replace(/_/g, ' ');
 const isDone = d => ['done', 'pend'].includes(localStatus(d).cls);
 const byName = (a, b) => a.localeCompare(b, 'ja', { numeric: true });
 
@@ -413,12 +421,12 @@ function renderPlants() {
 function renderLocs() {
   const inPlant = devices.filter(d => plantOf(d) === view.plant);
   renderTop(view.plant, BACK_LABEL.plants);
-  const locs = [...new Set(inPlant.map(locOf))].sort(byName);
+  const files = [...new Set(inPlant.map(fileOf))].sort(byName);
   $('#app').innerHTML = `
     ${mineSection(inPlant)}
-    <div class="sect">場所を選ぶ</div>
+    <div class="sect">報告書（Excel）を選ぶ</div>
+    ${files.map(f => menuItem('loc', f, fileLabel(f), inPlant.filter(d => fileOf(d) === f))).join('')}
     ${menuItem('loc', ALL, 'すべての機器', inPlant)}
-    ${locs.map(l => menuItem('loc', l, l, inPlant.filter(d => locOf(d) === l))).join('')}
     <div class="muted">更新 ${h(hm(fetchedAt))}</div>
     <button class="btn" data-act="refresh">一覧を更新</button>`;
 }
@@ -473,8 +481,8 @@ function renderNames() {
 const FILTERS = { all: 'すべて', mine: '自分', todo: '未着手', work: '作業中', done: '完了' };
 
 function renderList() {
-  const scope = devices.filter(d => plantOf(d) === view.plant && (view.loc === ALL || locOf(d) === view.loc));
-  renderTop(view.loc === ALL ? 'すべての機器' : view.loc, BACK_LABEL.locs);
+  const scope = devices.filter(d => plantOf(d) === view.plant && (view.loc === ALL || fileOf(d) === view.loc));
+  renderTop(view.loc === ALL ? 'すべての機器' : fileLabel(view.loc), BACK_LABEL.locs);
   const q = view.q.trim().toLowerCase();
   const match = d => {
     const st = d.status;
@@ -494,7 +502,7 @@ function renderList() {
     <input class="search" id="q" type="search" placeholder="タグ・名称で検索" value="${h(view.q)}">
     <div class="muted">未着手 ${counts[ST.TODO]} ／ 作業中 ${counts[ST.WORK]} ／ 完了 ${counts[ST.DONE]}　<span>更新 ${h(hm(fetchedAt))}</span></div>
     ${Object.entries(groups).map(([file, list]) => `
-      <div class="group">${h(file)}</div>
+      ${view.loc === ALL ? `<div class="group">${h(fileLabel(file))}</div>` : '<div style="height:8px"></div>'}
       ${list.map(itemButton).join('')}`).join('') || '<p class="muted">該当する機器がありません</p>'}
     <button class="btn" data-act="refresh">一覧を更新</button>`;
 }
@@ -678,19 +686,42 @@ async function startWork(reopen) {
   render();
 }
 
+// 画面下からせり上がる選択ダイアログ。押したボタンの key を返す（外側を押したら null）
+function choose(message, options) {
+  return new Promise(resolve => {
+    const el = document.createElement('div');
+    el.className = 'modal';
+    el.innerHTML = `<div class="box"><div class="msg">${h(message)}</div>
+      ${options.map(o => `<button class="btn ${o.cls || ''}" data-choose="${o.key}">${h(o.label)}</button>`).join('')}</div>`;
+    el.addEventListener('click', e => {
+      const b = e.target.closest('[data-choose]');
+      if (!b && e.target !== el) return;
+      el.remove();
+      resolve(b ? b.dataset.choose : null);
+    });
+    document.body.appendChild(el);
+  });
+}
+
 async function releaseWork() {
-  if (!confirm('作業を中断してロックを解除します。入力済みの値はサーバーに保存され、他の人も入力できるようになります。')) return;
+  const c = await choose('作業を中断して、他の人も入力できるようにします。ここまでの入力をどうしますか？', [
+    { key: 'save', label: '保存して中断（入力を残す）', cls: 'primary' },
+    { key: 'discard', label: '破棄して中断（開始前に戻す）', cls: 'warn' },
+    { key: 'cancel', label: 'キャンセル（作業を続ける）' },
+  ]);
+  if (c !== 'save' && c !== 'discard') return;
+  if (c === 'discard' && !confirm('作業開始後に入力した値をすべて消して、作業開始前の状態に戻します。アプリからは元に戻せません。よろしいですか？')) return;
   const id = view.id;
   try {
     const dr = drafts[id];
-    if (dr && dr.pending) await api('save', { id, data: dr.data, finish: false });
-    const j = await api('release', { id });
+    if (c === 'save' && dr && dr.pending) await api('save', { id, data: dr.data, finish: false });
+    const j = await api('release', { id, discard: c === 'discard' });
     updateDevice(j.device);
     delete drafts[id];
     saveDrafts();
     leaveDetail();
   } catch (e) {
-    alert(e.code === 'offline' ? 'ロック解除には電波が必要です。' : e.message);
+    alert(e.code === 'offline' ? '中断（ロック解除）には電波が必要です。' : e.message);
   }
   render();
 }
@@ -721,7 +752,7 @@ async function finishWork() {
   render();
 }
 
-// 入力画面から、開く前にいた画面（工場・場所・一覧）へ戻る
+// 入力画面から、開く前にいた画面（工場・報告書・一覧）へ戻る
 function leaveDetail() {
   view.screen = view.from && view.from !== 'detail' ? view.from : 'list';
 }
