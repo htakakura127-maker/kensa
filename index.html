@@ -104,6 +104,16 @@ table.pt input { width: 100%; text-align: right; padding: 8px 5px; }
 .part .pq { flex: none; color: var(--sub); font-size: 13px; white-space: nowrap; }
 .part .xchg { flex: none; min-height: 36px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 99px; background: #fff; font-size: 14px; font-weight: 700; color: var(--sub); }
 .part .xchg.on { background: var(--done); border-color: var(--done); color: #fff; }
+/* 詳細を表示（項目名の下に値を置き、横に並べない） */
+.details { margin-top: 8px; border-top: 1px solid var(--line); }
+.ditem { padding: 7px 0; border-bottom: 1px dashed var(--line); }
+.ditem .dl { font-size: 12px; color: var(--sub); }
+.ditem .dv { font-size: 15px; word-break: break-all; }
+/* 使用部品の編集 */
+.pedit { display: grid; grid-template-columns: minmax(0, 1fr) 56px 40px; gap: 6px; margin-bottom: 6px; }
+.pedit.k { grid-template-columns: minmax(0, 1fr) 52px 70px 40px; }
+.pedit input.num { text-align: right; }
+.pedit .del { border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ng); font-size: 18px; }
 /* 機器情報の確認（確認ボタン・変更ボタン） */
 .crow { display: grid; grid-template-columns: 64px minmax(0, 1fr) 62px 50px; gap: 6px; align-items: center; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
 .crow .cl { color: var(--sub); font-size: 12px; }
@@ -113,6 +123,7 @@ table.pt input { width: 100%; text-align: right; padding: 8px 5px; }
 .crow button { min-height: 36px; padding: 4px 2px; border: 1px solid var(--line); border-radius: 8px; background: #fff; font-size: 13px; font-weight: 700; color: var(--sub); }
 .crow .okbtn.on { background: var(--done); border-color: var(--done); color: #fff; }
 .crow .edbtn { color: var(--pri); }
+.crow .edbtn:disabled { color: #c3cad3; background: #f0f2f5; }
 /* 検査・作業員（押した順に番号） */
 .names.pick button.on { background: var(--pri); border-color: var(--pri); color: #fff; font-weight: 700; }
 .names.pick button:disabled { opacity: 1; }
@@ -401,9 +412,40 @@ function checkRows(data, list, editable) {
       <div class="cl">${h(c.label)}</div>
       <div class="cv">${h((changed ? f.value : c.value) || '（空欄）')}${changed ? `<div class="orig">元：${h(c.value || '（空欄）')}</div>` : ''}</div>
       <button type="button" class="okbtn ${f.ok ? 'on' : ''}" data-act="fieldok" data-key="${h(c.key)}" ${dis}>${f.ok ? '✓ 確認' : '確認'}</button>
-      <button type="button" class="edbtn" data-act="fieldedit" data-key="${h(c.key)}" ${dis}>変更</button>
+      <button type="button" class="edbtn" data-act="fieldedit" data-key="${h(c.key)}" ${editable && !f.ok ? '' : 'disabled'}>変更</button>
     </div>`;
   }).join('');
+}
+
+// 使用部品：ふだんは報告書（前年度）の内容を表示するだけ。「編集」を押すと変更でき、変更した内容がExcelに書き込まれる
+//   フィルター類は交換したら「交換済み」を押す（見た目の確認用で報告書には書かない）
+function partsSection(d, data, editable) {
+  const dis = editable ? '' : 'disabled';
+  const edited = !!data.partsEdited && Array.isArray(data.parts);
+  const parts = edited ? data.parts : (d.info.prev.parts || []);
+  const keiki = d.kind === KIND.KEIKI;
+  const max = d.info.partsMax || 10;
+  let html = `<h3>使用部品 <small>${edited ? '変更あり（Excelに書き込みます）' : '報告書の内容'}</small></h3>`;
+  if (editable && view.partsEdit && edited) {
+    html += parts.map((p, n) => `<div class="pedit ${keiki ? 'k' : ''}">
+        <input data-k="parts.${n}.name" value="${h(p.name)}" placeholder="品名">
+        <input class="num" inputmode="decimal" data-k="parts.${n}.qty" value="${h(p.qty)}" placeholder="数">
+        ${keiki ? `<select data-k="parts.${n}.kind">${opts(['', '故障', '不良', '予防'], p.kind || '')}</select>` : ''}
+        <button type="button" class="del" data-act="delpart" data-n="${n}" aria-label="削除">×</button></div>`).join('') +
+      (parts.length < max ? `<button class="btn small" data-act="addpart">＋ 部品を追加（最大${max}件）</button>` : '') +
+      `<button class="btn small primary" data-act="partsdone">編集を終える</button>
+       <button class="btn small warn" data-act="partsreset">報告書の内容に戻す</button>`;
+    return html;
+  }
+  html += (parts.length ? '' : '<p class="muted">なし</p>') + parts.map((p, n) => {
+    const done = !!data.replaced[n];
+    return `<div class="part"><span class="pn">${h(p.name)}</span>
+      <span class="pq">${p.qty != null && p.qty !== '' ? h(fmt(p.qty)) + ' 個' : ''}${p.kind ? '　' + h(p.kind) : ''}</span>
+      ${isFilterPart(p.name) ? `<button type="button" class="xchg ${done ? 'on' : ''}" data-act="replaced" data-n="${n}" ${dis}>${done ? '✓ 交換済み' : '交換済み'}</button>` : ''}
+    </div>`;
+  }).join('');
+  if (editable) html += `<button class="btn small" data-act="partsedit">使用部品を編集</button>`;
+  return html;
 }
 
 // 画面下からせり上がる入力ダイアログ。OK なら入力した文字、キャンセルなら null を返す
@@ -651,13 +693,21 @@ function infoCard(d) {
   const prev = `${h(i.prev.date || '')}　${h((i.prev.inspectors || []).filter(Boolean).join('・'))}`;
   if (d.kind === KIND.TOUCH) {
     return `<section class="card"><div style="font-weight:700">${h(d.tag)}</div><dl class="info">
-      ${row('No.', h(i.no) + '（' + h(d.sheet) + '）')}${row('設置場所', h(i.loc))}${row('台数', i.panels.length + ' 台')}${row('前回', prev)}</dl></section>`;
+      ${row('No.', h(i.no) + '（' + h(d.sheet) + '）')}${row('設置場所', h(i.loc))}${row('台数', i.panels.length + ' 台')}${row('前回', prev)}</dl>${detailsBlock(i)}</section>`;
   }
   return `<section class="card"><div style="font-weight:700">${h(i.name || d.title)}</div><dl class="info">
     ${row('No.', h(i.no) + '（' + h(d.sheet) + '）' + (i.kanri ? '　管理番号 ' + h(i.kanri) : ''))}
     ${row('場所', h(i.loc))}${row('型番', h(i.model))}${row('製造番号', h(i.serial))}
     ${row('範囲', (i.ranges || []).map(h).join('<br>'))}
-    ${row('精度', i.accuracy != null ? '±' + h(i.accuracy) + ' %F.S' : '')}${row('前回', prev)}</dl></section>`;
+    ${row('精度', i.accuracy != null ? '±' + h(i.accuracy) + ' %F.S' : '')}${row('前回', prev)}</dl>${detailsBlock(i)}</section>`;
+}
+
+// 「詳細を表示」：報告書上部の機器情報をすべて、1項目ずつ縦に並べて出す
+function detailsBlock(i) {
+  const list = i.details || [];
+  if (!list.length) return '';
+  return `<button type="button" class="btn small" data-act="details">${view.details ? '詳細を閉じる ▲' : '詳細を表示 ▼'}</button>
+    ${view.details ? `<div class="details">${list.map(x => `<div class="ditem"><div class="dl">${h(x.label)}</div><div class="dv">${h(x.value).replace(/\n/g, '<br>')}</div></div>`).join('')}</div>` : ''}`;
 }
 
 function renderDetail() {
@@ -774,16 +824,7 @@ function form(d, data, editable) {
       html += `<div class="grid2" style="margin-top:12px">
         <label>判定<select data-k="judge" ${dis}>${opts(['良好', '動作不良'], data.judge)}</select></label></div>`;
     }
-    // 使用部品：報告書（前年度）の内容を表示するだけ。フィルター類は交換したら「交換済み」を押す（見た目の確認用で報告書には書かない）
-    const parts = i.prev.parts || [];
-    html += `<h3>使用部品 <small>報告書の内容（変更はExcelで）</small></h3>` + (parts.length ? '' : '<p class="muted">なし</p>') +
-      parts.map((p, n) => {
-        const done = !!data.replaced[n];
-        return `<div class="part"><span class="pn">${h(p.name)}</span>
-          <span class="pq">${p.qty != null && p.qty !== '' ? h(fmt(p.qty)) + ' 個' : ''}${p.kind ? '　' + h(p.kind) : ''}</span>
-          ${isFilterPart(p.name) ? `<button type="button" class="xchg ${done ? 'on' : ''}" data-act="replaced" data-n="${n}" ${dis}>${done ? '✓ 交換済み' : '交換済み'}</button>` : ''}
-        </div>`;
-      }).join('');
+    html += partsSection(d, data, editable);
   }
 
   // 署名（印影）：報告書の検査・作業員欄の一番右が作業員、右から2番目より左が検査員（押した順）
@@ -947,6 +988,7 @@ async function editField(key) {
   const c = (d.info.checks || []).find(x => x.key === key);
   if (!c) return;
   const f = fieldOf(dr.data, c);
+  if (f.ok) return;  // 確認済みの項目は変更できない（変更するときは「確認」を押して外す）
   const v = await askText(`${checkName(d, c)}を現場の表示に合わせて変更します。\n報告書の値：${c.value || '（空欄）'}`, f.value != null ? f.value : c.value);
   if (v == null) return;
   const nv = v.trim();
@@ -958,7 +1000,7 @@ async function editField(key) {
       { key: 'add', label: '記事に追加する', cls: 'primary' },
       { key: 'no', label: '追加しない' },
     ]);
-    dr.data.fields[key] = Object.assign({}, f, { value: nv, ok: true });
+    dr.data.fields[key] = Object.assign({}, f, { value: nv });
     if (add === 'add') dr.data.note = (String(dr.data.note || '').replace(/\s+$/, '') + '\n' + line).replace(/^\n/, '');
   }
   touchDraft(view.id);
@@ -1014,7 +1056,7 @@ document.addEventListener('click', async e => {
   }
   else if (act === 'filter') { view.filter = b.dataset.f; store.set('filter', view.filter); render(); }
   else if (act === 'refresh') refresh();
-  else if (act === 'open') { view.from = view.screen; view.screen = 'detail'; view.id = b.dataset.id; render(); window.scrollTo(0, 0); }
+  else if (act === 'open') { view.from = view.screen; view.screen = 'detail'; view.id = b.dataset.id; view.details = false; view.partsEdit = false; render(); window.scrollTo(0, 0); }
   else if (act === 'start') startWork(false);
   else if (act === 'reopen') { if (confirm('完了済みの機器を修正のため再開します。よろしいですか？')) startWork(true); }
   else if (act === 'release') releaseWork();
@@ -1022,6 +1064,43 @@ document.addEventListener('click', async e => {
   else if (act === 'finish') finishWork();
   else if (act === 'insp') toggleInspector(b.dataset.name);
   else if (act === 'worker') setWorker(b.dataset.name);
+  else if (act === 'details') { view.details = !view.details; renderDetail(); }
+  else if (act === 'partsedit') {
+    editDraft(data => {
+      if (!data.partsEdited || !Array.isArray(data.parts)) {
+        data.parts = clone(getDev(view.id).info.prev.parts || []).map(p => ({ name: p.name || '', qty: p.qty == null ? '' : String(p.qty), kind: p.kind || '' }));
+        data.partsEdited = true;
+      }
+      view.partsEdit = true;
+    });
+  }
+  else if (act === 'partsdone') {
+    editDraft(data => {
+      view.partsEdit = false;
+      data.parts = data.parts.filter(p => String(p.name || '').trim() || String(p.qty || '').trim());
+      // 結果が報告書と同じなら「変更なし」に戻す（Excel には書かない）
+      const orig = (getDev(view.id).info.prev.parts || []).map(p => [p.name || '', p.qty == null ? '' : String(p.qty), p.kind || '']);
+      if (JSON.stringify(data.parts.map(p => [p.name || '', String(p.qty == null ? '' : p.qty), p.kind || ''])) === JSON.stringify(orig)) {
+        data.partsEdited = false;
+        data.parts = null;
+      }
+    });
+  }
+  else if (act === 'partsreset') {
+    if (!confirm('使用部品の変更を取り消して、報告書の内容に戻します。よろしいですか？')) return;
+    editDraft(data => { data.partsEdited = false; data.parts = null; data.replaced = {}; view.partsEdit = false; });
+  }
+  else if (act === 'addpart') editDraft(data => { data.parts.push({ name: '', qty: '', kind: '' }); });
+  else if (act === 'delpart') {
+    editDraft(data => {
+      const n = +b.dataset.n;
+      data.parts.splice(n, 1);
+      // 「交換済み」の目印を、詰めた後の行番号に合わせる
+      const r = {};
+      Object.keys(data.replaced).forEach(k => { if (+k < n) r[k] = true; else if (+k > n) r[+k - 1] = true; });
+      data.replaced = r;
+    });
+  }
   else if (act === 'fieldedit') editField(b.dataset.key);
   else if (act === 'fieldok') editDraft(data => { const k = b.dataset.key; data.fields[k] = Object.assign({}, data.fields[k], { ok: !(data.fields[k] && data.fields[k].ok) }); });
   else if (act === 'replaced') editDraft(data => { const n = b.dataset.n; if (data.replaced[n]) delete data.replaced[n]; else data.replaced[n] = true; });
