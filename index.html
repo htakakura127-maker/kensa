@@ -104,6 +104,15 @@ table.pt input { width: 100%; text-align: right; padding: 8px 5px; }
 .part .pq { flex: none; color: var(--sub); font-size: 13px; white-space: nowrap; }
 .part .xchg { flex: none; min-height: 36px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 99px; background: #fff; font-size: 14px; font-weight: 700; color: var(--sub); }
 .part .xchg.on { background: var(--done); border-color: var(--done); color: #fff; }
+/* 機器情報の確認（確認ボタン・変更ボタン） */
+.crow { display: grid; grid-template-columns: 64px minmax(0, 1fr) 62px 50px; gap: 6px; align-items: center; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.crow .cl { color: var(--sub); font-size: 12px; }
+.crow .cv { word-break: break-all; }
+.crow .orig { font-size: 11px; color: var(--sub); text-decoration: line-through; }
+.crow.changed .cv { background: #fff59d; border-radius: 4px; padding: 2px 4px; }
+.crow button { min-height: 36px; padding: 4px 2px; border: 1px solid var(--line); border-radius: 8px; background: #fff; font-size: 13px; font-weight: 700; color: var(--sub); }
+.crow .okbtn.on { background: var(--done); border-color: var(--done); color: #fff; }
+.crow .edbtn { color: var(--pri); }
 /* 検査・作業員（押した順に番号） */
 .names.pick button.on { background: var(--pri); border-color: var(--pri); color: #fff; font-weight: 700; }
 .names.pick button:disabled { opacity: 1; }
@@ -322,12 +331,20 @@ function emptyCh() { return { up: ['', '', '', '', ''], down: ['', '', '', '', '
 
 function normalize(d, data) {
   const prev = d.info.prev || {};
-  const base = { date: today(), temp: '', note: (prev.note || []).join('\n'), inspectors: [cfg.name], replaced: {} };
+  const base = { date: today(), temp: '', note: (prev.note || []).join('\n'), worker: cfg.name, inspectors: [], replaced: {}, fields: {} };
   if (d.kind === KIND.KEIKI) Object.assign(base, { result: '合格' });
   if (d.kind === KIND.VALVE) Object.assign(base, { judge: '良好' });
   const out = Object.assign(base, data || {});
-  out.inspectors = (out.inspectors || []).filter(Boolean).slice(0, MAX_STAMPS);
+  // 旧版のデータ（押した順に右詰めで全員）は、一番右を作業員、残りを右から順に検査員として読み替える
+  if (data && !('worker' in data) && Array.isArray(data.inspectors) && data.inspectors.filter(Boolean).length) {
+    const arr = data.inspectors.filter(Boolean);
+    out.worker = arr.pop();
+    out.inspectors = arr.reverse();
+  }
+  out.worker = out.worker || '';
+  out.inspectors = (out.inspectors || []).filter(n => n && n !== out.worker).slice(0, MAX_STAMPS - 1);
   out.replaced = out.replaced || {};
+  out.fields = out.fields || {};
   out.ch = (d.info.chs || []).map((_, k) => Object.assign(emptyCh(), ((data && data.ch) || [])[k] || {}));
   if (d.kind === KIND.TOUCH) {
     out.panels = (d.info.panels || []).map((_, b) => Object.assign(
@@ -369,6 +386,46 @@ function notePreview(d, text) {
 }
 
 const isFilterPart = name => /ﾌｨﾙﾀ|フィルタ/.test(name || '');
+
+// 目視確認する機器情報（調節弁番号・型番・製造番号・製造年月）。現場で違っていたら変更できる
+const checkName = (d, c) => (c.panel != null && d.info.panels && d.info.panels[c.panel] ? d.info.panels[c.panel].name + ' ' : '') + c.label;
+const fieldOf = (data, c) => data.fields[c.key] || {};
+const isChanged = (data, c) => { const f = fieldOf(data, c); return f.value != null && f.value !== c.value; };
+
+function checkRows(data, list, editable) {
+  const dis = editable ? '' : 'disabled';
+  return list.map(c => {
+    const f = fieldOf(data, c);
+    const changed = isChanged(data, c);
+    return `<div class="crow ${changed ? 'changed' : ''}">
+      <div class="cl">${h(c.label)}</div>
+      <div class="cv">${h((changed ? f.value : c.value) || '（空欄）')}${changed ? `<div class="orig">元：${h(c.value || '（空欄）')}</div>` : ''}</div>
+      <button type="button" class="okbtn ${f.ok ? 'on' : ''}" data-act="fieldok" data-key="${h(c.key)}" ${dis}>${f.ok ? '✓ 確認' : '確認'}</button>
+      <button type="button" class="edbtn" data-act="fieldedit" data-key="${h(c.key)}" ${dis}>変更</button>
+    </div>`;
+  }).join('');
+}
+
+// 画面下からせり上がる入力ダイアログ。OK なら入力した文字、キャンセルなら null を返す
+function askText(message, value) {
+  return new Promise(resolve => {
+    const el = document.createElement('div');
+    el.className = 'modal';
+    el.innerHTML = `<div class="box"><div class="msg">${h(message)}</div>
+      <input id="ask-in" type="text" autocomplete="off" style="width:100%" value="${h(value)}">
+      <button class="btn primary" data-ask="ok">OK</button><button class="btn" data-ask="cancel">キャンセル</button></div>`;
+    const done = v => { el.remove(); resolve(v); };
+    el.addEventListener('click', e => {
+      const b = e.target.closest('[data-ask]');
+      if (!b && e.target !== el) return;
+      done(b && b.dataset.ask === 'ok' ? el.querySelector('#ask-in').value : null);
+    });
+    document.body.appendChild(el);
+    const inp = el.querySelector('#ask-in');
+    inp.focus();
+    inp.select();
+  });
+}
 
 // 時計の遅れ／進みから報告書の文言を作る（前年度の書き方に合わせる）
 function clockText(p) {
@@ -676,6 +733,10 @@ function form(d, data, editable) {
         <div class="hint"><span class="prev">${i.prev.temp != null ? '前回 ' + h(fmt(i.prev.temp)) + '℃' : ''}</span></div></label>` : ''}
     </div>
     ${showDate ? '' : '<p class="muted">この報告書には試験日の欄がありません。</p>'}`;
+  const checks = i.checks || [];
+  const checkHelp = '<small>現物と見比べて「確認」。違っていたら「変更」（報告書のセルが黄色になります）</small>';
+  if (d.kind !== KIND.TOUCH && checks.length) html += `<h3>機器情報の確認 ${checkHelp}</h3>${checkRows(data, checks, editable)}`;
+  if (d.kind === KIND.TOUCH && checks.length) html += `<h3>機器情報の確認 ${checkHelp}</h3>`;
 
   if (d.kind === KIND.TOUCH) {
     html += i.panels.map((p, b) => {
@@ -690,8 +751,9 @@ function form(d, data, editable) {
         }
         return `<div class="pitem"><span>${h(label)}</span><select data-k="panels.${b}.items.${j}" ${dis}>${opts(['良好', '不良'], pd.items[j])}</select></div>`;
       }).join('');
+      const pc = checks.filter(c => c.panel === b);
       return `<div class="panel"><div class="pname">${h(p.name)}</div>
-        <div class="muted">${h(p.model)}　${h(p.serial)}${p.made ? '　' + h(p.made) : ''}</div>${items}
+        ${pc.length ? checkRows(data, pc, editable) : `<div class="muted">${h(p.model)}　${h(p.serial)}${p.made ? '　' + h(p.made) : ''}</div>`}${items}
         <div class="ptext">前回：${h((p.prev || []).filter(x => x && x !== '良好').join('／') || 'すべて良好')}</div></div>`;
     }).join('');
   } else {
@@ -722,10 +784,12 @@ function form(d, data, editable) {
       }).join('');
   }
 
-  // 検査・作業員：押した順に番号が付き、報告書の検査・作業員欄へ右詰めで印影が入る
+  // 署名（印影）：報告書の検査・作業員欄の一番右が作業員、右から2番目より左が検査員（押した順）
   const sel = data.inspectors;
-  const pick = [...new Set(names.concat(sel))];
-  html += `<h3>検査・作業員 <small>押した順に報告書の欄へ右詰めで印影が入ります（最大${MAX_STAMPS}名）</small></h3>
+  const pick = [...new Set(names.concat(sel, data.worker ? [data.worker] : []))];
+  html += `<h3>作業員 <small>報告書の検査・作業員欄の一番右に印影が入ります</small></h3>
+    <div class="names pick">${pick.map(n => `<button type="button" class="${data.worker === n ? 'on' : ''}" data-act="worker" data-name="${h(n)}" ${dis}>${h(n)}</button>`).join('')}</div>
+    <h3>検査員 <small>押した順に、右から2番目の枠から左へ印影が入ります（最大${MAX_STAMPS - 1}名）</small></h3>
     <div class="names pick">${pick.map(n => {
       const k = sel.indexOf(n);
       return `<button type="button" class="${k >= 0 ? 'on' : ''}" data-act="insp" data-name="${h(n)}" ${dis}>${k >= 0 ? (k + 1) + '. ' : ''}${h(n)}</button>`;
@@ -828,7 +892,9 @@ async function finishWork() {
   const blanks = countBlanks(d, dr.data);
   const over = splitNote(dr.data.note, d.info.noteCaps || DEFAULT_NOTE_CAPS).length - (d.info.noteCaps || DEFAULT_NOTE_CAPS).length;
   if (over > 0 && !confirm(`記事が記事欄に入りきりません（${over} 行はみ出し）。はみ出した分はExcelに書き込まれません。このまま完了にしますか？`)) return;
-  if (!dr.data.inspectors.length && !confirm('検査・作業員が選ばれていません。このまま完了にしますか？')) return;
+  const unchecked = (d.info.checks || []).filter(c => !fieldOf(dr.data, c).ok).length;
+  if (unchecked && !confirm(`機器情報で「確認」を押していない項目が ${unchecked} 件あります。このまま完了にしますか？`)) return;
+  if (!dr.data.worker && !confirm('作業員が選ばれていません。このまま完了にしますか？')) return;
   if (blanks && !confirm(`未入力の測定値が ${blanks} か所あります。このまま完了にしますか？`)) return;
   if (!blanks && !confirm('完了にして送信します。よろしいですか？')) return;
   dr.finish = true;
@@ -858,9 +924,43 @@ function toggleInspector(name) {
   editDraft(data => {
     const i = data.inspectors.indexOf(name);
     if (i >= 0) { data.inspectors.splice(i, 1); return; }
-    if (data.inspectors.length >= MAX_STAMPS) { alert(`検査・作業員の欄は ${MAX_STAMPS} 名までです。`); return false; }
+    if (data.inspectors.length >= MAX_STAMPS - 1) { alert(`検査員は ${MAX_STAMPS - 1} 名までです（一番右の枠は作業員）。`); return false; }
+    if (data.worker === name) data.worker = '';  // 同じ人は作業員と検査員の両方には入れない
     data.inspectors.push(name);
   });
+}
+
+function setWorker(name) {
+  editDraft(data => {
+    data.worker = data.worker === name ? '' : name;
+    data.inspectors = data.inspectors.filter(n => n !== data.worker);
+  });
+}
+
+// 機器情報を現場の表示に合わせて変更する。変更したら記事に1行追加するかを選ぶ
+async function editField(key) {
+  const d = getDev(view.id);
+  const dr = drafts[view.id];
+  if (!d || !dr || !(d.status === ST.WORK && d.worker === cfg.name) || dr.blocked) return;
+  const c = (d.info.checks || []).find(x => x.key === key);
+  if (!c) return;
+  const f = fieldOf(dr.data, c);
+  const v = await askText(`${checkName(d, c)}を現場の表示に合わせて変更します。\n報告書の値：${c.value || '（空欄）'}`, f.value != null ? f.value : c.value);
+  if (v == null) return;
+  const nv = v.trim();
+  if (nv === (c.value || '')) {
+    if (dr.data.fields[key]) delete dr.data.fields[key].value;  // 元に戻した
+  } else {
+    const line = `${checkName(d, c)}：${c.value || '（空欄）'}が${nv || '（空欄）'}に変更されていた`;
+    const add = await choose(`記事に次の1行を追加しますか？\n「${line}」`, [
+      { key: 'add', label: '記事に追加する', cls: 'primary' },
+      { key: 'no', label: '追加しない' },
+    ]);
+    dr.data.fields[key] = Object.assign({}, f, { value: nv, ok: true });
+    if (add === 'add') dr.data.note = (String(dr.data.note || '').replace(/\s+$/, '') + '\n' + line).replace(/^\n/, '');
+  }
+  touchDraft(view.id);
+  renderDetail();
 }
 
 // ---- イベント ----
@@ -919,6 +1019,9 @@ document.addEventListener('click', async e => {
   else if (act === 'force') forceRelease();
   else if (act === 'finish') finishWork();
   else if (act === 'insp') toggleInspector(b.dataset.name);
+  else if (act === 'worker') setWorker(b.dataset.name);
+  else if (act === 'fieldedit') editField(b.dataset.key);
+  else if (act === 'fieldok') editDraft(data => { const k = b.dataset.key; data.fields[k] = Object.assign({}, data.fields[k], { ok: !(data.fields[k] && data.fields[k].ok) }); });
   else if (act === 'replaced') editDraft(data => { const n = b.dataset.n; if (data.replaced[n]) delete data.replaced[n]; else data.replaced[n] = true; });
 });
 
