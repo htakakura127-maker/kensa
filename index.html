@@ -98,10 +98,20 @@ table.pt input { width: 100%; text-align: right; padding: 8px 5px; }
 .chk input { width: 22px; height: 22px; min-height: 0; margin: 0; }
 .names { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .names button { padding: 12px 4px; border: 1px solid var(--line); border-radius: 10px; background: #fff; font-size: 16px; }
-.part { display: grid; grid-template-columns: minmax(0, 1fr) 58px 40px; gap: 6px; margin-bottom: 6px; }
-.part.k { grid-template-columns: minmax(0, 1fr) 52px 72px 40px; }
-.part input.num { text-align: right; }
-.part .del { border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ng); font-size: 18px; }
+/* 使用部品（表示のみ。フィルター類だけ「交換済み」の目印を付けられる） */
+.part { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 15px; }
+.part .pn { flex: 1; min-width: 0; word-break: break-all; }
+.part .pq { flex: none; color: var(--sub); font-size: 13px; white-space: nowrap; }
+.part .xchg { flex: none; min-height: 36px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 99px; background: #fff; font-size: 14px; font-weight: 700; color: var(--sub); }
+.part .xchg.on { background: var(--done); border-color: var(--done); color: #fff; }
+/* 検査・作業員（押した順に番号） */
+.names.pick button.on { background: var(--pri); border-color: var(--pri); color: #fff; font-weight: 700; }
+.names.pick button:disabled { opacity: 1; }
+/* 記事の Excel での見え方 */
+.noteprev { margin: -4px 0 12px; font-size: 12px; color: var(--sub); }
+.noteprev ol { margin: 4px 0 0; padding-left: 2.2em; font-family: "Hiragino Kaku Gothic ProN", monospace; color: var(--ink); }
+.noteprev li.over { color: var(--ng); }
+.noteprev .ng { color: var(--ng); font-weight: 700; }
 .panel { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; }
 .panel .pname { font-weight: 700; }
 .pitem { display: grid; grid-template-columns: minmax(0, 1fr) 120px; gap: 8px; align-items: center; margin-top: 8px; font-size: 14px; }
@@ -184,6 +194,7 @@ async function api(action, body, conn) {
   setOnline(true);
   let j;
   try { j = await res.json(); } catch (e) { throw Object.assign(new Error('サーバーの応答が読めません。設定コードが古い可能性があります'), { code: 'bad' }); }
+  checkReset(j.resetId);
   if (!j.ok) {
     // 保存済みの合言葉が通らない＝合言葉が変更された。入力中のデータは残したまま再設定してもらう
     if (j.code === 'auth' && !conn && cfg && cfg.key) {
@@ -194,6 +205,21 @@ async function api(action, body, conn) {
     throw Object.assign(new Error(j.error), { code: j.code });
   }
   return j;
+}
+
+// 事務所でデータが初期化されたら（resetId が変わったら）、端末内の入力途中データを捨てる。
+// 残しておくと、テスト時の値が初期化後のサーバーへ送られてしまうため
+function checkReset(resetId) {
+  if (resetId === undefined) return;
+  const known = store.get('resetId', null);
+  if (known === resetId) return;
+  store.set('resetId', resetId);
+  if (resetId && Object.keys(drafts).length) {
+    drafts = {};
+    saveDrafts();
+    renderNet();
+    setTimeout(() => { alert('事務所でデータが初期化されました。この端末に残っていた入力途中のデータは消去しました。'); render(); }, 0);
+  }
 }
 
 // 設定コード「KENSA1:<base64>」を { api, key } に戻す。URLだけを貼った場合はそのまま使う
@@ -254,7 +280,7 @@ async function sync() {
   try {
     for (const id of Object.keys(drafts)) {
       const dr = drafts[id];
-      if (!dr.pending || dr.blocked) continue;
+      if (!dr || !dr.pending || dr.blocked) continue;  // 送信中に初期化で消された下書きは飛ばす
       const rev = dr.rev;
       try {
         const j = await api('save', { id, data: dr.data, finish: !!dr.finish });
@@ -266,6 +292,7 @@ async function sync() {
         saveDrafts();
       } catch (e) {
         if (['offline', 'busy', 'bad', 'auth', 'config', 'blocked'].includes(e.code)) break;
+        if (drafts[id] !== dr) continue;  // 初期化で消された下書き
         dr.blocked = e.message;  // ロックを失った等。データは残してユーザーに知らせる
         saveDrafts();
       }
@@ -295,10 +322,12 @@ function emptyCh() { return { up: ['', '', '', '', ''], down: ['', '', '', '', '
 
 function normalize(d, data) {
   const prev = d.info.prev || {};
-  const base = { date: today(), temp: '', note: (prev.note || []).join('\n'), inspectors: [cfg.name, ''], parts: clone(prev.parts || []) };
-  if (d.kind === KIND.KEIKI) Object.assign(base, { result: '合格', overall: '合格' });
+  const base = { date: today(), temp: '', note: (prev.note || []).join('\n'), inspectors: [cfg.name], replaced: {} };
+  if (d.kind === KIND.KEIKI) Object.assign(base, { result: '合格' });
   if (d.kind === KIND.VALVE) Object.assign(base, { judge: '良好' });
   const out = Object.assign(base, data || {});
+  out.inspectors = (out.inspectors || []).filter(Boolean).slice(0, MAX_STAMPS);
+  out.replaced = out.replaced || {};
   out.ch = (d.info.chs || []).map((_, k) => Object.assign(emptyCh(), ((data && data.ch) || [])[k] || {}));
   if (d.kind === KIND.TOUCH) {
     out.panels = (d.info.panels || []).map((_, b) => Object.assign(
@@ -306,6 +335,40 @@ function normalize(d, data) {
   }
   return out;
 }
+
+// 検査・作業員の欄（報告書の印影の枠）の数
+const MAX_STAMPS = 5;
+// 記事1行に入る文字数（半角=1、全角=2）。新しい登録データには機器ごとに入っている
+const DEFAULT_NOTE_CAPS = Array(10).fill(60);
+const isHalf = c => (c >= 0x20 && c <= 0x7E) || (c >= 0xFF61 && c <= 0xFF9F);
+
+// 記事を Excel の記事欄1行に収まる長さで折り返す（pc/common.ps1 の Split-NoteLines と同じ計算）
+function splitNote(text, caps) {
+  const lines = [];
+  String(text || '').split(/\r?\n/).forEach(para => {
+    if (!para.trim()) return;
+    let cur = '', w = 0;
+    for (let i = 0; i < para.length; i++) {
+      const cw = isHalf(para.charCodeAt(i)) ? 1 : 2;
+      const cap = caps[Math.min(lines.length, caps.length - 1)];
+      if (cur && w + cw > cap) { lines.push(cur); cur = ''; w = 0; }
+      cur += para[i]; w += cw;
+    }
+    lines.push(cur);
+  });
+  return lines;
+}
+
+function notePreview(d, text) {
+  const caps = d.info.noteCaps || DEFAULT_NOTE_CAPS;
+  const lines = splitNote(text, caps);
+  const over = lines.length - caps.length;
+  return `Excelの記事欄（${caps.length}行）での見え方：長い行は自動で折り返します
+    ${lines.length ? `<ol>${lines.map((l, n) => `<li class="${n >= caps.length ? 'over' : ''}">${h(l)}</li>`).join('')}</ol>` : ''}
+    ${over > 0 ? `<div class="ng">記事欄に入りきりません（${over} 行はみ出しています）。はみ出した分はExcelに書き込まれません。</div>` : ''}`;
+}
+
+const isFilterPart = name => /ﾌｨﾙﾀ|フィルタ/.test(name || '');
 
 // 時計の遅れ／進みから報告書の文言を作る（前年度の書き方に合わせる）
 function clockText(p) {
@@ -361,6 +424,11 @@ function render() {
   if (view.screen === 'list' && view.loc !== ALL && !devices.some(d => plantOf(d) === view.plant && fileOf(d) === view.loc)) view.screen = 'locs';
   if (view.screen === 'plants') return renderPlants();
   if (view.screen === 'locs') return renderLocs();
+  // 検索欄に入力中（自動更新など）は欄を作り直さず結果だけ更新する
+  if (document.activeElement && document.activeElement.id === 'q' && $('#results')) {
+    $('#results').innerHTML = listResults(listScope());
+    return;
+  }
   renderList();
 }
 
@@ -376,6 +444,12 @@ const ALL = '__all__';
 const plantOf = d => d.plant || '（工場名なし）';
 const fileOf = d => d.file || '（報告書名なし）';
 const fileLabel = f => f.replace(/_/g, ' ');
+// 工場のメニュー名は「工場名＋今年の年度」
+function plantLabel(p) {
+  const years = devices.filter(d => plantOf(d) === p).map(d => +(d.info && d.info.year) || 0);
+  const y = Math.max(0, ...years);
+  return y ? `${p} ${y}年度` : p;
+}
 const isDone = d => ['done', 'pend'].includes(localStatus(d).cls);
 const byName = (a, b) => a.localeCompare(b, 'ja', { numeric: true });
 
@@ -412,7 +486,7 @@ function renderPlants() {
   $('#app').innerHTML = `
     ${mineSection(devices)}
     <div class="sect">工場を選ぶ</div>
-    ${plants.map(p => menuItem('plant', p, p, devices.filter(d => plantOf(d) === p))).join('') || '<p class="muted">機器が登録されていません</p>'}
+    ${plants.map(p => menuItem('plant', p, plantLabel(p), devices.filter(d => plantOf(d) === p))).join('') || '<p class="muted">機器が登録されていません</p>'}
     <div class="muted">更新 ${h(hm(fetchedAt))}</div>
     <button class="btn" data-act="refresh">一覧を更新</button>
     <button class="btn" data-act="logout" style="margin-top:24px">名前を変更する</button>`;
@@ -420,7 +494,7 @@ function renderPlants() {
 
 function renderLocs() {
   const inPlant = devices.filter(d => plantOf(d) === view.plant);
-  renderTop(view.plant, BACK_LABEL.plants);
+  renderTop(plantLabel(view.plant), BACK_LABEL.plants);
   const files = [...new Set(inPlant.map(fileOf))].sort(byName);
   $('#app').innerHTML = `
     ${mineSection(inPlant)}
@@ -480,9 +554,23 @@ function renderNames() {
 
 const FILTERS = { all: 'すべて', mine: '自分', todo: '未着手', work: '作業中', done: '完了' };
 
+const listScope = () => devices.filter(d => plantOf(d) === view.plant && (view.loc === ALL || fileOf(d) === view.loc));
+
 function renderList() {
-  const scope = devices.filter(d => plantOf(d) === view.plant && (view.loc === ALL || fileOf(d) === view.loc));
+  const scope = listScope();
   renderTop(view.loc === ALL ? 'すべての機器' : fileLabel(view.loc), BACK_LABEL.locs);
+  const counts = Object.fromEntries(Object.values(ST).map(s => [s, scope.filter(d => d.status === s).length]));
+  $('#app').innerHTML = `
+    ${progress(scope)}
+    <div class="filters" style="margin-top:10px">${Object.entries(FILTERS).map(([k, v]) => `<button class="${view.filter === k ? 'on' : ''}" data-act="filter" data-f="${k}">${v}</button>`).join('')}</div>
+    <input class="search" id="q" type="search" placeholder="計器番号・調節弁番号・名称で検索" value="${h(view.q)}">
+    <div class="muted">未着手 ${counts[ST.TODO]} ／ 作業中 ${counts[ST.WORK]} ／ 完了 ${counts[ST.DONE]}　<span>更新 ${h(hm(fetchedAt))}</span></div>
+    <div id="results">${listResults(scope)}</div>
+    <button class="btn" data-act="refresh">一覧を更新</button>`;
+}
+
+// 検索欄は作り直さず、結果だけを書き換える（日本語入力の変換中に欄を作り直すと文字が二重に入るため）
+function listResults(scope) {
   const q = view.q.trim().toLowerCase();
   const match = d => {
     const st = d.status;
@@ -493,18 +581,11 @@ function renderList() {
     if (view.filter === 'done' && st !== ST.DONE) return false;
     return !q || (d.tag + ' ' + d.title + ' ' + (d.info.name || '')).toLowerCase().includes(q);
   };
-  const counts = Object.fromEntries(Object.values(ST).map(s => [s, scope.filter(d => d.status === s).length]));
   const groups = {};
   scope.filter(match).forEach(d => (groups[d.file] = groups[d.file] || []).push(d));
-  $('#app').innerHTML = `
-    ${progress(scope)}
-    <div class="filters" style="margin-top:10px">${Object.entries(FILTERS).map(([k, v]) => `<button class="${view.filter === k ? 'on' : ''}" data-act="filter" data-f="${k}">${v}</button>`).join('')}</div>
-    <input class="search" id="q" type="search" placeholder="タグ・名称で検索" value="${h(view.q)}">
-    <div class="muted">未着手 ${counts[ST.TODO]} ／ 作業中 ${counts[ST.WORK]} ／ 完了 ${counts[ST.DONE]}　<span>更新 ${h(hm(fetchedAt))}</span></div>
-    ${Object.entries(groups).map(([file, list]) => `
+  return Object.entries(groups).map(([file, list]) => `
       ${view.loc === ALL ? `<div class="group">${h(fileLabel(file))}</div>` : '<div style="height:8px"></div>'}
-      ${list.map(itemButton).join('')}`).join('') || '<p class="muted">該当する機器がありません</p>'}
-    <button class="btn" data-act="refresh">一覧を更新</button>`;
+      ${list.map(itemButton).join('')}`).join('') || '<p class="muted">該当する機器がありません</p>';
 }
 
 function infoCard(d) {
@@ -512,11 +593,11 @@ function infoCard(d) {
   const row = (k, v) => v ? `<dt>${k}</dt><dd>${v}</dd>` : '';
   const prev = `${h(i.prev.date || '')}　${h((i.prev.inspectors || []).filter(Boolean).join('・'))}`;
   if (d.kind === KIND.TOUCH) {
-    return `<section class="card"><div style="font-weight:700">${h(d.sheet)}</div><dl class="info">
-      ${row('No.', h(i.no))}${row('設置場所', h(i.loc))}${row('台数', i.panels.length + ' 台')}${row('前回', prev)}</dl></section>`;
+    return `<section class="card"><div style="font-weight:700">${h(d.tag)}</div><dl class="info">
+      ${row('No.', h(i.no) + '（' + h(d.sheet) + '）')}${row('設置場所', h(i.loc))}${row('台数', i.panels.length + ' 台')}${row('前回', prev)}</dl></section>`;
   }
   return `<section class="card"><div style="font-weight:700">${h(i.name || d.title)}</div><dl class="info">
-    ${row('No.', h(i.no) + (i.kanri ? '　管理番号 ' + h(i.kanri) : ''))}
+    ${row('No.', h(i.no) + '（' + h(d.sheet) + '）' + (i.kanri ? '　管理番号 ' + h(i.kanri) : ''))}
     ${row('場所', h(i.loc))}${row('型番', h(i.model))}${row('製造番号', h(i.serial))}
     ${row('範囲', (i.ranges || []).map(h).join('<br>'))}
     ${row('精度', i.accuracy != null ? '±' + h(i.accuracy) + ' %F.S' : '')}${row('前回', prev)}</dl></section>`;
@@ -624,30 +705,33 @@ function form(d, data, editable) {
     });
     if (d.kind === KIND.KEIKI) {
       html += `<div class="grid2" style="margin-top:12px">
-        <label>判定<select data-k="result" ${dis}>${opts(['合格', '不合格'], data.result)}</select></label>
-        <label>総合判定<select data-k="overall" ${dis}>${opts(['合格', '不合格'], data.overall)}</select></label></div>`;
+        <label>判定<select data-k="result" ${dis}>${opts(['合格', '不合格'], data.result)}</select></label></div>`;
     } else {
       html += `<div class="grid2" style="margin-top:12px">
         <label>判定<select data-k="judge" ${dis}>${opts(['良好', '動作不良'], data.judge)}</select></label></div>`;
     }
-    // 使用部品
-    const kinds = d.kind === KIND.KEIKI;
-    html += `<h3>使用部品 <small>最大10件</small></h3>` + (data.parts.length ? '' : '<p class="muted">なし</p>') +
-      data.parts.map((p, n) => `<div class="part ${kinds ? 'k' : ''}">
-        <input data-k="parts.${n}.name" value="${h(p.name)}" placeholder="品名" ${dis}>
-        <input class="num" inputmode="decimal" data-k="parts.${n}.qty" value="${h(p.qty)}" placeholder="数" ${dis}>
-        ${kinds ? `<select data-k="parts.${n}.kind" ${dis}>${opts(['', '故障', '不良', '予防'], p.kind || '')}</select>` : ''}
-        ${editable ? `<button class="del" data-act="delpart" data-n="${n}" aria-label="削除">×</button>` : '<span></span>'}
-      </div>`).join('') +
-      (editable && data.parts.length < 10 ? '<button class="btn small" data-act="addpart">＋ 部品を追加</button>' : '');
+    // 使用部品：報告書（前年度）の内容を表示するだけ。フィルター類は交換したら「交換済み」を押す（見た目の確認用で報告書には書かない）
+    const parts = i.prev.parts || [];
+    html += `<h3>使用部品 <small>報告書の内容（変更はExcelで）</small></h3>` + (parts.length ? '' : '<p class="muted">なし</p>') +
+      parts.map((p, n) => {
+        const done = !!data.replaced[n];
+        return `<div class="part"><span class="pn">${h(p.name)}</span>
+          <span class="pq">${p.qty != null && p.qty !== '' ? h(fmt(p.qty)) + ' 個' : ''}${p.kind ? '　' + h(p.kind) : ''}</span>
+          ${isFilterPart(p.name) ? `<button type="button" class="xchg ${done ? 'on' : ''}" data-act="replaced" data-n="${n}" ${dis}>${done ? '✓ 交換済み' : '交換済み'}</button>` : ''}
+        </div>`;
+      }).join('');
   }
 
-  const nameOpts = v => `<option value=""></option>` + opts(names, v);
-  html += `<div class="grid2" style="margin-top:14px">
-      <label>検査員1<select data-k="inspectors.0" ${dis}>${nameOpts(data.inspectors[0])}</select></label>
-      <label>検査員2<select data-k="inspectors.1" ${dis}>${nameOpts(data.inspectors[1])}</select></label>
-    </div>
-    <label>記事（1行が報告書の1行）<textarea data-k="note" ${dis}>${h(data.note)}</textarea></label>
+  // 検査・作業員：押した順に番号が付き、報告書の検査・作業員欄へ右詰めで印影が入る
+  const sel = data.inspectors;
+  const pick = [...new Set(names.concat(sel))];
+  html += `<h3>検査・作業員 <small>押した順に報告書の欄へ右詰めで印影が入ります（最大${MAX_STAMPS}名）</small></h3>
+    <div class="names pick">${pick.map(n => {
+      const k = sel.indexOf(n);
+      return `<button type="button" class="${k >= 0 ? 'on' : ''}" data-act="insp" data-name="${h(n)}" ${dis}>${k >= 0 ? (k + 1) + '. ' : ''}${h(n)}</button>`;
+    }).join('')}</div>
+    <label style="margin-top:14px">記事<textarea data-k="note" ${dis}>${h(data.note)}</textarea></label>
+    <div class="noteprev" id="noteprev">${notePreview(d, data.note)}</div>
     ${i.chs && i.chs.length ? '<p class="muted">誤差は「(測定値−基準)÷スパン」の目安です。精度を超えると赤字になります。正式な値はExcelで計算されます。</p>' : ''}`;
   return html;
 }
@@ -742,6 +826,9 @@ async function finishWork() {
   const d = getDev(view.id);
   const dr = drafts[view.id];
   const blanks = countBlanks(d, dr.data);
+  const over = splitNote(dr.data.note, d.info.noteCaps || DEFAULT_NOTE_CAPS).length - (d.info.noteCaps || DEFAULT_NOTE_CAPS).length;
+  if (over > 0 && !confirm(`記事が記事欄に入りきりません（${over} 行はみ出し）。はみ出した分はExcelに書き込まれません。このまま完了にしますか？`)) return;
+  if (!dr.data.inspectors.length && !confirm('検査・作業員が選ばれていません。このまま完了にしますか？')) return;
   if (blanks && !confirm(`未入力の測定値が ${blanks} か所あります。このまま完了にしますか？`)) return;
   if (!blanks && !confirm('完了にして送信します。よろしいですか？')) return;
   dr.finish = true;
@@ -757,12 +844,23 @@ function leaveDetail() {
   view.screen = view.from && view.from !== 'detail' ? view.from : 'list';
 }
 
-function editParts(fn) {
+// 入力画面のボタン操作（検査・作業員、交換済み）で下書きを変更する
+function editDraft(fn) {
   const dr = drafts[view.id];
-  if (!dr) return;
-  fn(dr.data.parts);
+  const d = getDev(view.id);
+  if (!dr || !d || !(d.status === ST.WORK && d.worker === cfg.name) || dr.blocked) return;
+  if (fn(dr.data) === false) return;
   touchDraft(view.id);
   renderDetail();
+}
+
+function toggleInspector(name) {
+  editDraft(data => {
+    const i = data.inspectors.indexOf(name);
+    if (i >= 0) { data.inspectors.splice(i, 1); return; }
+    if (data.inspectors.length >= MAX_STAMPS) { alert(`検査・作業員の欄は ${MAX_STAMPS} 名までです。`); return false; }
+    data.inspectors.push(name);
+  });
 }
 
 // ---- イベント ----
@@ -820,13 +918,19 @@ document.addEventListener('click', async e => {
   else if (act === 'release') releaseWork();
   else if (act === 'force') forceRelease();
   else if (act === 'finish') finishWork();
-  else if (act === 'addpart') editParts(p => p.push({ name: '', qty: '', kind: '' }));
-  else if (act === 'delpart') editParts(p => p.splice(+b.dataset.n, 1));
+  else if (act === 'insp') toggleInspector(b.dataset.name);
+  else if (act === 'replaced') editDraft(data => { const n = b.dataset.n; if (data.replaced[n]) delete data.replaced[n]; else data.replaced[n] = true; });
 });
 
 function onEdit(e) {
   const t = e.target;
-  if (t.id === 'q') { view.q = t.value; renderList(); const q = $('#q'); q.focus(); q.setSelectionRange(q.value.length, q.value.length); return; }
+  if (t.id === 'q') {
+    if (e.isComposing) return;  // 日本語の変換中は確定（compositionend）まで待つ
+    view.q = t.value;
+    const r = $('#results');
+    if (r) r.innerHTML = listResults(listScope());
+    return;
+  }
   const k = t.dataset.k;
   if (!k || view.screen !== 'detail') return;
   const dr = drafts[view.id];
@@ -842,8 +946,10 @@ function onEdit(e) {
   touchDraft(view.id);
   if (t.type === 'checkbox' || (clock && clock[2] === 'Dir')) renderDetail();
   else if (k.startsWith('ch.')) updateDevs(getDev(view.id), dr.data);
+  else if (k === 'note') { const np = $('#noteprev'); if (np) np.innerHTML = notePreview(getDev(view.id), dr.data.note); }
 }
 document.addEventListener('input', onEdit);
+document.addEventListener('compositionend', e => { if (e.target.id === 'q') onEdit(e); });
 document.addEventListener('change', e => { if (e.target.tagName === 'SELECT' || e.target.type === 'checkbox' || e.target.type === 'date') onEdit(e); });
 
 // 数値キーボードにはマイナスや文字が無いため、キーボードの上に「±」「CLOSE」などのバーを出す
