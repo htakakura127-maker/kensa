@@ -667,6 +667,8 @@ function renderDetail() {
   const mine = d.status === ST.WORK && d.worker === cfg.name;
   if (mine && !drafts[d.id]) { drafts[d.id] = { data: normalize(d, d.data), rev: 0, pending: false }; saveDrafts(); }
   const dr = drafts[d.id];
+  // 前のバージョンで作った下書きには、後から増えた項目（確認欄・作業員など）が無いため、今の形にそろえる
+  if (dr) dr.data = normalize(d, dr.data);
   let head = '', data = null, editable = false, actions = '';
 
   if (dr && dr.blocked) {
