@@ -143,6 +143,10 @@ table.pt input { width: 100%; text-align: right; padding: 8px 5px; }
 .ditem { padding: 7px 0; border-bottom: 1px dashed var(--line); }
 .ditem .dl { font-size: 12px; color: var(--sub); }
 .ditem .dv { font-size: 15px; word-break: break-all; }
+/* 共有メモ */
+textarea.memo { display: block; width: 100%; min-height: 110px; }
+.memoinfo { display: flex; justify-content: space-between; font-size: 12px; color: var(--sub); margin-top: 4px; }
+.memoinfo .ng { color: var(--ng); font-weight: 700; }
 /* 最後に入力した温度（流用） */
 .lasttemp { display: flex; align-items: center; gap: 8px; margin: -4px 0 10px; font-size: 12px; color: var(--sub); }
 .lasttemp span { flex: 1; min-width: 0; }
@@ -223,6 +227,8 @@ let names = store.get('names', []);
 let devices = store.get('devices', []);
 let fetchedAt = store.get('fetchedAt', '');
 let drafts = store.get('drafts', {});      // 機器id → { data, rev, pending, finish, blocked }
+let memos = store.get('memos', {});        // 工場名 → { text, at, by }（共有メモ。サーバーの別シートにあり、初期化しても消えない）
+let memoDrafts = store.get('memoDrafts', {});  // 工場名 → 保存前の入力（圏外や途中で閉じても消えないよう端末に残す）
 // 画面の階層：plants（工場）→ locs（報告書＝Excelファイル）→ list（機器）→ detail（入力）。選んだ工場・報告書は次回も開く
 const nav = store.get('nav', {});
 let view = { screen: nav.plant ? (nav.loc ? 'list' : 'locs') : 'plants', plant: nav.plant || null, loc: nav.loc || null, from: null, id: null, filter: store.get('filter', 'all'), q: '' };
@@ -339,6 +345,7 @@ async function refresh(quiet) {
     const j = await netTask(() => api('list', {}));
     devices = j.devices;
     fetchedAt = j.now;
+    if (j.memos) { memos = j.memos; store.set('memos', memos); }
     store.set('devices', devices);
     store.set('fetchedAt', fetchedAt);
     if (j.names && j.names.length) {
@@ -480,13 +487,19 @@ function rememberTemp(d, v) {
   if (!String(v).trim()) return;
   store.set('lastTemp', { v: String(v).trim(), at: Date.now(), loc: (d.info && d.info.loc) || '', tag: d.tag || '' });
 }
+// 今からどれだけ前か（12分前、1時間5分前、2日前）
+function agoText(ms) {
+  const min = Math.max(0, Math.floor((Date.now() - ms) / 60000));
+  if (min < 1) return '1分以内';
+  if (min < 60) return `${min}分前`;
+  if (min < 24 * 60) return `${Math.floor(min / 60)}時間${min % 60 ? (min % 60) + '分' : ''}前`;
+  return `${Math.floor(min / (24 * 60))}日前`;
+}
+
 function lastTempBlock() {
   const t = store.get('lastTemp', null);
   if (!t) return '';
-  const at = new Date(t.at);
-  const when = `${at.getMonth() + 1}/${at.getDate()} ${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
-  const tag = String(t.tag || '').split(/[\s　]/)[0];  // 「TIC-901　温水温度…」の番号だけ
-  return `<div class="lasttemp"><span>最後に入力した温度 <b>${h(t.v)}℃</b>（${h(when)}・${h([t.loc, tag].filter(Boolean).join(' '))}）</span>
+  return `<div class="lasttemp"><span>最後に入力した温度 <b>${h(t.v)}℃</b>（${h(agoText(t.at))}${t.loc ? '　' + h(t.loc) : ''}）</span>
     <button type="button" data-act="usetemp">この温度を使う</button></div>`;
 }
 
@@ -968,6 +981,8 @@ function render() {
   if (view.screen !== 'plants' && devices.length && !devices.some(d => plantOf(d) === view.plant)) view.screen = 'plants';
   if (view.screen === 'list' && view.loc !== ALL && !devices.some(d => plantOf(d) === view.plant && fileOf(d) === view.loc)) view.screen = 'locs';
   if (view.screen === 'plants') return renderPlants();
+  // 共有メモを入力中（自動更新など）は画面を作り直さない（入力中の文字やカーソルが消えるため）
+  if (view.screen === 'locs' && document.activeElement && document.activeElement.id === 'memo') return;
   if (view.screen === 'locs') return renderLocs();
   // 検索欄に入力中（自動更新など）は欄を作り直さず結果だけ更新する
   if (document.activeElement && document.activeElement.id === 'q' && $('#results')) {
@@ -1047,8 +1062,48 @@ function renderLocs() {
     <div class="sect">報告書（Excel）を選ぶ</div>
     ${files.map(f => menuItem('loc', f, fileLabel(f), inPlant.filter(d => fileOf(d) === f))).join('')}
     ${menuItem('loc', ALL, 'すべての機器', inPlant)}
+    ${memoSection(view.plant)}
     <div class="muted">更新 ${h(hm(fetchedAt))}</div>
     <button class="btn" data-act="refresh">一覧を更新</button>`;
+}
+
+// ---- 共有メモ（工場ごと。全員で見て書ける。データ初期化しても消えない）----
+function memoSection(plant) {
+  const m = memos[plant] || { text: '', at: '', by: '' };
+  const draft = memoDrafts[plant];
+  const unsaved = draft != null && draft !== m.text;
+  return `<div class="sect">共有メモ <small class="muted">全員で共有・データ初期化しても消えません</small></div>
+    <textarea id="memo" class="memo" placeholder="連絡事項など">${h(draft != null ? draft : m.text)}</textarea>
+    <div class="memoinfo"><span>${m.at ? `最終更新 ${h(hm(m.at))}${m.by ? ' ' + h(m.by) : ''}` : 'まだ書かれていません'}</span>
+      <span id="memo-state" class="${unsaved ? 'ng' : ''}">${unsaved ? '未保存' : ''}</span></div>
+    <button class="btn small primary" data-act="savememo">メモを保存</button>`;
+}
+
+async function saveMemo(force) {
+  const plant = view.plant;
+  const el = $('#memo');
+  const text = el ? el.value : (memoDrafts[plant] || '');
+  const base = (memos[plant] || {}).at || '';
+  try {
+    const j = await withBusy('メモを保存しています…', () => api('saveMemo', { plant, text, baseAt: base, force: !!force }));
+    memos[plant] = j.memo;
+    store.set('memos', memos);
+    delete memoDrafts[plant];
+    store.set('memoDrafts', memoDrafts);
+    render();
+  } catch (e) {
+    if (e.code === 'memoconflict') {
+      const c = await choose(`${e.message}。どうしますか？`, [
+        { key: 'over', label: '自分の内容で上書きする', cls: 'warn' },
+        { key: 'load', label: '最新の内容を表示する（自分の入力は消えます）' },
+        { key: 'cancel', label: 'キャンセル（入力はそのまま）' },
+      ]);
+      if (c === 'over') return saveMemo(true);
+      if (c === 'load') { delete memoDrafts[plant]; store.set('memoDrafts', memoDrafts); await withBusy('読み込み中…', () => refresh(true)); render(); }
+      return;
+    }
+    alert(e.code === 'offline' ? 'メモの保存には電波が必要です。入力した内容はこの端末に残っています。' : e.message);
+  }
 }
 
 function renderNet() {
@@ -1655,6 +1710,7 @@ document.addEventListener('click', async e => {
     });
   }
   else if (act === 'testsedit') { view.testsEdit = !view.testsEdit; renderDetail(); }
+  else if (act === 'savememo') saveMemo(false);
   else if (act === 'usetemp') { const t = store.get('lastTemp', null); if (t) editDraft(data => { data.temp = t.v; }); }
 });
 
@@ -1665,6 +1721,13 @@ function onEdit(e) {
     view.q = t.value;
     const r = $('#results');
     if (r) r.innerHTML = listResults(listScope());
+    return;
+  }
+  if (t.id === 'memo') {
+    memoDrafts[view.plant] = t.value;
+    store.set('memoDrafts', memoDrafts);
+    const st = $('#memo-state');
+    if (st) { const un = t.value !== ((memos[view.plant] || {}).text || ''); st.textContent = un ? '未保存' : ''; st.className = un ? 'ng' : ''; }
     return;
   }
   const k = t.dataset.k;
