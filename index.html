@@ -81,6 +81,8 @@ textarea { min-height: 120px; resize: vertical; }
 /* 修正手順（画像） */
 .modal.manual { align-items: stretch; }
 .modal.manual .box { max-height: 100%; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.man-group { margin: 10px 0 14px; }
+.man-title { font-weight: 700; color: var(--pri); }
 .man-img { display: block; width: 100%; height: auto; margin: 8px 0; border: 1px solid var(--line); border-radius: 8px; }
 dl.info { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 12px; margin: 8px 0 0; font-size: 14px; }
 dl.info dt { color: var(--sub); }
@@ -608,39 +610,74 @@ function clockSection(d, data, editable) {
     <button type="button" class="btn small" data-act="jst">日本標準時間</button>`;
 }
 
-// ---- 修正手順（記録計・タッチパネル）。web/manual/ に置いた画像を順に表示する（例：touch-clock-1.jpg、touch-clock-2.jpg …）----
-const MANUALS = {
-  'touch-brightness': '輝度調整（タッチパネル）',
-  'touch-clock': '時刻合わせ（タッチパネル）',
-  'recorder-clock': '時刻合わせ（記録計）',
-};
+// ---- 修正手順（記録計・タッチパネル）。web/manual/ に置いた画像を表示する ----
+//   タッチパネルは機種のシリーズごとに手順が違うため、シートの各台の型番からシリーズを判定し、シリーズごとに画像を出す
+//   画像の名前：<シリーズ>-<手順>.png（2枚目以降は -2.png、-3.png …）。例：gp4000-clock.png
+const MANUAL_PROCS = { brightness: '輝度調整', clock: '時刻合わせ' };
+const MANUAL_SERIES = [
+  { re: /^(PFX)?GP4\d{3}/i, key: 'gp4000', name: 'GP4000シリーズ' },
+  { re: /^GP[45]77R/i, key: 'gp477r', name: 'GP477R・GP577R' },
+  { re: /^GT2\d{3}/i, key: 'gt2000', name: 'GOT2000シリーズ' },
+];
+const loadImg = src => new Promise(ok => { const img = new Image(); img.onload = () => ok(img); img.onerror = () => ok(null); img.src = src; });
+async function loadManualImages(base) {
+  const list = [];
+  for (let n = 1; n <= 20; n++) {
+    const name = n === 1 ? base : `${base}-${n}`;
+    const img = (await loadImg(`manual/${name}.png`)) || (await loadImg(`manual/${name}.jpg`));
+    if (!img) break;
+    img.className = 'man-img';
+    list.push(img);
+  }
+  return list;
+}
+
 async function showManual(d) {
-  let key = 'recorder-clock';
+  let proc = 'clock';
   if (d.kind === KIND.TOUCH) {
-    key = await choose('修正手順を選んでください。', [
-      { key: 'touch-brightness', label: '輝度調整' },
-      { key: 'touch-clock', label: '時刻合わせ' },
+    proc = await choose('修正手順を選んでください。', [
+      { key: 'brightness', label: '輝度調整' },
+      { key: 'clock', label: '時刻合わせ' },
       { key: 'cancel', label: 'キャンセル' },
     ]);
-    if (!MANUALS[key]) return;
+    if (!MANUAL_PROCS[proc]) return;
+  }
+  // 表示する組：タッチパネルはシリーズごと（どの台が該当するかも書く）、記録計は1組
+  const groups = [];
+  if (d.kind === KIND.TOUCH) {
+    const dr = drafts[d.id];
+    const data = dr ? dr.data : normalize(d, d.data);
+    const other = [];
+    (d.info.panels || []).forEach((p, b) => {
+      const c = (d.info.checks || []).find(x => x.key === `p${b}.model`);
+      const model = c && isChanged(data, c) ? fieldOf(data, c).value : p.model;
+      const s = MANUAL_SERIES.find(x => x.re.test(String(model || '').trim()));
+      if (!s) { other.push(`${p.name}（${model || '型番なし'}）`); return; }
+      let g = groups.find(x => x.key === s.key);
+      if (!g) groups.push(g = { key: s.key, title: s.name, base: `${s.key}-${proc}`, panels: [] });
+      g.panels.push(`${p.name}（${model}）`);
+    });
+    if (other.length) groups.push({ title: '手順の無い機種', panels: other });
+  } else {
+    groups.push({ title: '', base: `recorder-${proc}`, panels: [] });
   }
   const el = document.createElement('div');
   el.className = 'modal manual';
-  el.innerHTML = `<div class="box"><div class="msg" style="font-weight:700">${h(MANUALS[key])}</div>
-    <div id="man-imgs"><p class="muted">読み込み中…</p></div><button class="btn" data-man="close">閉じる</button></div>`;
+  el.innerHTML = `<div class="box"><div class="msg" style="font-weight:700">修正手順：${h(MANUAL_PROCS[proc])}${d.kind === KIND.TOUCH ? '' : '（記録計）'}</div>
+    ${groups.map((g, i) => `<div class="man-group">${g.title ? `<div class="man-title">${h(g.title)}</div>` : ''}
+      ${g.panels.length ? `<div class="muted">${g.panels.map(h).join('<br>')}</div>` : ''}
+      <div data-man-imgs="${i}">${g.base ? '<p class="muted">読み込み中…</p>' : ''}</div></div>`).join('')}
+    <button class="btn" data-man="close">閉じる</button></div>`;
   el.addEventListener('click', e => { if (e.target === el || e.target.closest('[data-man=close]')) el.remove(); });
   document.body.appendChild(el);
-  const box = el.querySelector('#man-imgs');
-  const load = src => new Promise(ok => { const img = new Image(); img.onload = () => ok(img); img.onerror = () => ok(null); img.src = src; });
-  const imgs = [];
-  for (let n = 1; n <= 30; n++) {
-    const img = await load(`manual/${key}-${n}.jpg`);
-    if (!img) break;
-    imgs.push(img);
+  for (let i = 0; i < groups.length; i++) {
+    if (!groups[i].base) continue;
+    const imgs = await loadManualImages(groups[i].base);
+    if (!el.isConnected) return;
+    const box = el.querySelector(`[data-man-imgs="${i}"]`);
+    box.innerHTML = imgs.length ? '' : `<p class="muted">この手順の画像はまだ登録されていません（web/manual/${h(groups[i].base)}.png）。</p>`;
+    imgs.forEach(img => box.appendChild(img));
   }
-  if (!el.isConnected) return;
-  box.innerHTML = imgs.length ? '' : `<p class="muted">この手順の画像はまだ登録されていません。<br>（web/manual/${h(key)}-1.jpg、-2.jpg … を追加すると表示されます）</p>`;
-  imgs.forEach(img => { img.className = 'man-img'; box.appendChild(img); });
 }
 // ---- 日本標準時（NICT）。NICT の時計ページと同じ時刻サーバーから時刻を取り、iPhone の時計とのずれを補正して表示する ----
 const NICT_HOSTS = ['3fe5a5f690efc790d4764f1c528a4ebb89fa4168', '67495dde3b39c2991829589f0101ab7a035eecf5', '08a08e3a6edef4ba7a0c055a42d8e1ba2597f2b5'];
