@@ -62,6 +62,11 @@ textarea { min-height: 120px; resize: vertical; }
 .badge { flex: none; font-size: 12px; font-weight: 700; color: #fff; padding: 3px 9px; border-radius: 99px; max-width: 45%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .st-todo { background: var(--todo); } .st-work { background: var(--work); } .st-done { background: var(--done); } .st-pend { background: #e08a00; }
 .st-wait { background: #7b4fb8; } .st-temp { background: #2f6fa8; }
+/* 押したことが分かるよう、押している間は少し薄くする */
+button:active, .btn:active, .menu:active, .item:active { opacity: .55; }
+/* 右上の「更新中…」 */
+.net.busyn { background: rgba(255,255,255,.35); }
+.mini-spin { display: inline-block; width: 10px; height: 10px; margin-right: 5px; vertical-align: -1px; border: 2px solid rgba(255,255,255,.5); border-top-color: #fff; border-radius: 50%; animation: spin .8s linear infinite; }
 /* 通信中の表示 */
 .busy { position: fixed; inset: 0; z-index: 40; background: rgba(0,0,0,.25); display: flex; align-items: center; justify-content: center; }
 .busy .box { background: #fff; border-radius: 14px; padding: 18px 26px; display: flex; flex-direction: column; align-items: center; gap: 10px; font-weight: 700; }
@@ -310,9 +315,17 @@ function updateDevice(d) {
   store.set('devices', devices);
 }
 
+// 通信中（一覧の取得・送信）の数。右上の表示を「更新中…」にする
+let netBusy = 0;
+async function netTask(fn) {
+  netBusy++;
+  renderNet();
+  try { return await fn(); } finally { netBusy--; renderNet(); }
+}
+
 async function refresh(quiet) {
   try {
-    const j = await api('list', {});
+    const j = await netTask(() => api('list', {}));
     devices = j.devices;
     fetchedAt = j.now;
     store.set('devices', devices);
@@ -345,7 +358,7 @@ async function sync() {
       if (!dr || !dr.pending || dr.blocked) continue;  // 送信中に初期化で消された下書きは飛ばす
       const rev = dr.rev;
       try {
-        const j = await api('save', { id, data: dr.data, finish: !!dr.finish });
+        const j = await netTask(() => api('save', { id, data: dr.data, finish: !!dr.finish }));
         updateDevice(j.device);
         const cur = drafts[id];
         if (cur && cur.rev === rev) {
@@ -960,8 +973,9 @@ function renderNet() {
   const el = $('#net');
   if (!el) return;
   const n = Object.values(drafts).filter(d => d.pending).length;
-  el.className = 'net' + (!online ? ' off' : n ? ' pend' : '');
-  el.textContent = (online ? 'オンライン' : '圏外') + (n ? ` 未送信${n}` : '');
+  el.className = 'net' + (!online ? ' off' : n ? ' pend' : '') + (netBusy ? ' busyn' : '');
+  el.innerHTML = netBusy ? '<span class="mini-spin"></span>更新中…'
+    : h((online ? 'オンライン' : '圏外') + (n ? ` 未送信${n}` : ''));
 }
 
 function renderSetup() {
@@ -1438,7 +1452,7 @@ document.addEventListener('click', async e => {
   }
   else if (act === 'plant') { view.plant = b.dataset.key; view.loc = null; view.screen = 'locs'; saveNav(); render(); window.scrollTo(0, 0); }
   else if (act === 'loc') { view.loc = b.dataset.key; view.screen = 'list'; view.q = ''; saveNav(); render(); window.scrollTo(0, 0); }
-  else if (act === 'sync') { await sync(); if (ready()) await refresh(); }
+  else if (act === 'sync') await withBusy('送信・更新しています…', async () => { await sync(); if (ready()) await refresh(); });
   else if (act === 'connect') {
     let parsed = { api: cfg && cfg.api, key: '' };
     const codeEl = $('#s-code');
@@ -1453,7 +1467,7 @@ document.addEventListener('click', async e => {
     if (!key) return alert('合言葉を入力してください。');
     const conn = { api: parsed.api, key, name: '' };
     try {
-      const j = await api('hello', {}, conn);
+      const j = await withBusy('接続しています…', () => api('hello', {}, conn));
       cfg = conn;
       store.set('cfg', cfg);
       names = j.names;
@@ -1466,7 +1480,7 @@ document.addEventListener('click', async e => {
     if (!confirm('接続設定を消して、設定コードの貼り付けからやり直します。よろしいですか？')) return;
     cfg = null; store.set('cfg', cfg); render();
   }
-  else if (act === 'pickname') { cfg.name = b.dataset.name; store.set('cfg', cfg); await refresh(true); render(); sync(); }
+  else if (act === 'pickname') { cfg.name = b.dataset.name; store.set('cfg', cfg); await withBusy('読み込み中…', () => refresh(true)); render(); sync(); }
   else if (act === 'logout') {
     if (Object.values(drafts).some(d => d.pending)) return alert('未送信のデータがあります。送信してから変更してください。');
     cfg.name = ''; store.set('cfg', cfg); render();
@@ -1576,6 +1590,8 @@ function onEdit(e) {
   if (view.showMissing) markMissing();
 }
 document.addEventListener('input', onEdit);
+// iPhone の Safari は、タッチを受け取る処理が無いと「押している間」の見た目（:active）を出さない
+document.addEventListener('touchstart', () => {}, { passive: true });
 document.addEventListener('compositionend', e => { if (e.target.id === 'q') onEdit(e); });
 document.addEventListener('change', e => { if (e.target.tagName === 'SELECT' || e.target.type === 'checkbox' || e.target.type === 'date') onEdit(e); });
 
