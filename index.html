@@ -87,7 +87,7 @@ button:active, .btn:active, .menu:active, .item:active { opacity: .55; }
 .pvna { flex: none; padding: 2px 8px; border: 1px solid var(--line); border-radius: 99px; background: #fff; font-size: 12px; font-weight: 700; color: var(--sub); }
 .pvna.on { background: var(--todo); border-color: var(--todo); color: #fff; }
 /* 製造番号の読み方の例 */
-.chint { font-size: 11px; color: var(--sub); padding: 0 0 6px 70px; margin-top: -2px; border-bottom: 1px solid var(--line); }
+.chint { font-size: 11px; color: var(--sub); padding: 0 0 6px 80px; margin-top: -2px; border-bottom: 1px solid var(--line); }
 .crow.has-hint { border-bottom: 0; }  /* 製造番号と読み方の間には線を引かない */
 /* 修正手順（画像） */
 .modal.manual { align-items: stretch; }
@@ -149,7 +149,7 @@ table.pt input { width: 100%; text-align: right; padding: 8px 5px; }
 .pedit input.num { text-align: right; }
 .pedit .del { border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ng); font-size: 18px; }
 /* 機器情報の確認（確認ボタン・変更ボタン） */
-.crow { display: grid; grid-template-columns: 64px minmax(0, 1fr) 62px 50px; gap: 6px; align-items: center; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.crow { display: grid; grid-template-columns: 74px minmax(0, 1fr) 62px 50px; gap: 6px; align-items: center; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
 .crow .cl { color: var(--sub); font-size: 12px; }
 .crow .cv { word-break: break-all; }
 .crow .orig { font-size: 11px; color: var(--sub); text-decoration: line-through; }
@@ -419,13 +419,20 @@ function normalize(d, data) {
   out.ch = (d.info.chs || []).map((_, k) => Object.assign(emptyCh(), ((data && data.ch) || [])[k] || {}));
   if (d.kind === KIND.TOUCH) {
     out.panels = (d.info.panels || []).map((_, b) => Object.assign(
-      { items: ['良好', '良好', '良好', '良好'], clockDir: '良好', clockMin: '' }, ((data && data.panels) || [])[b] || {}));
+      { items: ['良好', '良好', CLOCK_OK, '良好'], clockDir: CLOCK_OK, clockMin: '' }, ((data && data.panels) || [])[b] || {}));
+    // 以前の版の「良好」は「ズレなし」に読み替える
+    out.panels.forEach(p => {
+      if (p.clockDir === '良好') p.clockDir = CLOCK_OK;
+      if (p.items[2] === '良好') p.items[2] = CLOCK_OK;
+    });
   }
   return out;
 }
 
 // 検査・作業員の欄（報告書の印影の枠）の数
 const MAX_STAMPS = 5;
+// タッチパネルの時計が合っていたときの表記（選択肢と報告書の検査結果）
+const CLOCK_OK = 'ズレなし';
 // 記事1行に入る文字数（半角=1、全角=2）。新しい登録データには機器ごとに入っている
 const DEFAULT_NOTE_CAPS = Array(10).fill(60);
 const isHalf = c => (c >= 0x20 && c <= 0x7E) || (c >= 0xFF61 && c <= 0xFF9F);
@@ -576,7 +583,8 @@ function pvFields(d, data, editable) {
     const prev = f ? pvTokenValue(f.token) : '';
     const na = !!data.pv.na[it.path];
     // 「不要」：その機器に無い項目。押すと入力できなくなり、記事にも書かない（記事にあれば消す）
-    return `<div class="pvcell"><div class="pvhead"><span>${h(it.label)}${it.unit ? ` (${h(it.unit)})` : ''}</span>
+    // 2CH以上は「不要」ボタンと並ぶと単位まで入らないため、単位は下の「前回」の表示に任せる
+    return `<div class="pvcell"><div class="pvhead"><span>${h(it.label)}${it.unit && n === 1 ? ` (${h(it.unit)})` : ''}</span>
         <button type="button" class="pvna ${na ? 'on' : ''}" data-act="pvna" data-path="${it.path}" ${dis}>${na ? '✓ 不要' : '不要'}</button></div>
       <input class="num" inputmode="decimal" data-k="${it.path}" value="${na ? '' : h(pvInput(data, it))}" placeholder="${na ? '不要' : h(prev.replace(/[^\d.+\-]/g, ''))}" ${na ? 'disabled' : dis}>
       <div class="hint"><span class="prev">${prev ? '前回 ' + h(prev) : ''}</span></div></div>`;
@@ -838,7 +846,7 @@ function askText(message, value, type) {
 
 // 時計の遅れ／進みから報告書の文言を作る（前年度の書き方に合わせる）
 function clockText(p) {
-  if (!p.clockDir || p.clockDir === '良好') return '良好';
+  if (!p.clockDir || p.clockDir === CLOCK_OK || p.clockDir === '良好') return CLOCK_OK;
   const m = String(p.clockMin || '').trim() || '○';
   return `ﾀｯﾁﾊﾟﾈﾙの内部時計時刻が${p.clockDir === '遅れ' ? '遅れて' : '進んで'}いたため実施（${m}分${p.clockDir}）`;
 }
@@ -1158,13 +1166,14 @@ function form(d, data, editable) {
       ${showTemp ? `<label>温度 (℃)<input class="num" inputmode="decimal" data-k="temp" value="${h(data.temp)}" placeholder="${h(fmt(i.prev.temp))}" ${dis}>
         <div class="hint"><span class="prev">${i.prev.temp != null ? '前回 ' + h(fmt(i.prev.temp)) + '℃' : ''}</span></div></label>` : ''}
     </div>
-    ${showDate ? '' : '<p class="muted">この報告書には試験日の欄がありません。</p>'}
-    ${d.kind === KIND.KEIKI ? pvFields(d, data, editable) : ''}
-    ${isRecorder(d) ? clockSection(d, data, editable) : ''}`;
+    ${showDate ? '' : '<p class="muted">この報告書には試験日の欄がありません。</p>'}`;
+  // 並び：試験日・温度 → 機器情報の確認 → PV（計器）→ 時刻合わせ（記録計）
   const checks = i.checks || [];
   const checkHelp = '<small>現物と見比べて「確認」。違っていたら「変更」（報告書のセルが黄色になります）</small>';
   if (d.kind !== KIND.TOUCH && checks.length) html += `<h3>機器情報の確認 ${checkHelp}</h3>${checkRows(data, checks, editable)}`;
   if (d.kind === KIND.TOUCH && checks.length) html += `<h3>機器情報の確認 ${checkHelp}</h3>`;
+  if (d.kind === KIND.KEIKI) html += `<h3>PV</h3>${pvFields(d, data, editable)}`;
+  if (isRecorder(d)) html += clockSection(d, data, editable);
 
   if (d.kind === KIND.TOUCH) {
     html += i.panels.map((p, b) => {
@@ -1172,8 +1181,8 @@ function form(d, data, editable) {
       const items = i.items.map((label, j) => {
         if (j === 2) {
           return `<div class="pclock"><span>${h(label)}</span>
-              <select data-k="panels.${b}.clockDir" ${dis}>${opts(['良好', '遅れ', '進み'], pd.clockDir)}</select></div>
-            ${pd.clockDir && pd.clockDir !== '良好' ? `<div class="pclock"><span>ずれ（分）</span>
+              <select data-k="panels.${b}.clockDir" ${dis}>${opts([CLOCK_OK, '遅れ', '進み'], pd.clockDir)}</select></div>
+            ${pd.clockDir && pd.clockDir !== CLOCK_OK ? `<div class="pclock"><span>ずれ（分）</span>
               <input class="num" inputmode="decimal" data-k="panels.${b}.clockMin" value="${h(pd.clockMin)}" placeholder="分" ${dis}></div>` : ''}
             <div class="ptext">(今回)<span data-ptext="${b}">${h(pd.items[2])}</span></div>
             <div class="ptext">(前回)${h((p.prev || [])[2] || '')}</div>`;
