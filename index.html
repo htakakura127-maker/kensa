@@ -143,6 +143,13 @@ table.pt input { width: 100%; text-align: right; padding: 8px 5px; }
 .ditem { padding: 7px 0; border-bottom: 1px dashed var(--line); }
 .ditem .dl { font-size: 12px; color: var(--sub); }
 .ditem .dv { font-size: 15px; word-break: break-all; }
+/* 耐圧・漏洩・気密試験（ふだんはグレー表示） */
+.vt { display: grid; grid-template-columns: minmax(0, 1fr) 64px 76px 56px; gap: 6px; align-items: center; margin-bottom: 6px; }
+.vt.head span { font-size: 11px; color: var(--sub); text-align: center; }
+.vt .vl { font-size: 12px; line-height: 1.25; }
+.vt input, .vt select { padding: 6px 4px; min-height: 36px; font-size: 15px; }
+.vt select { padding: 6px 2px; }
+.vtests.off { opacity: .5; }
 /* 使用部品の編集 */
 .pedit { display: grid; grid-template-columns: minmax(0, 1fr) 56px 40px; gap: 6px; margin-bottom: 6px; }
 .pedit.k { grid-template-columns: minmax(0, 1fr) 52px 70px 40px; }
@@ -416,6 +423,7 @@ function normalize(d, data) {
   out.pv.b = Array.isArray(out.pv.b) ? out.pv.b : [];
   out.pv.na = out.pv.na || {};
   out.clock = Object.assign({ done: '', dir: '遅れ', amount: '', unit: '分' }, out.clock);
+  out.tests = VALVE_TESTS.map((_, i) => Object.assign({ p: '', t: '', j: '' }, (out.tests || [])[i] || {}));
   out.ch = (d.info.chs || []).map((_, k) => Object.assign(emptyCh(), ((data && data.ch) || [])[k] || {}));
   if (d.kind === KIND.TOUCH) {
     out.panels = (d.info.panels || []).map((_, b) => Object.assign(
@@ -463,7 +471,54 @@ function notePreview(d, text) {
     ${over > 0 ? `<div class="ng">記事欄に入りきりません（${over} 行はみ出しています）。はみ出した分はExcelに書き込まれません。</div>` : ''}`;
 }
 
-const isFilterPart = name => /ﾌｨﾙﾀ|フィルタ/.test(name || '');
+// 「交換済み」ボタンを付ける部品（フィルター・パッキン類）
+const isFilterPart = name => /ﾌｨﾙﾀ|フィルタ|ﾊﾟｯｷﾝ|パッキン/.test(name || '');
+const partsOf = (d, data) => (data.partsEdited && Array.isArray(data.parts) ? data.parts : ((d.info.prev || {}).parts || []));
+const escRe = s => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// 「交換済み」を押したら記事に「※○○交換実施(2026/11/05)」（押した日）を入れる。同じ部品の行が既にあれば書き換え、外したら消す
+function applyReplaced(d, data, n, on) {
+  const name = String((partsOf(d, data)[n] || {}).name || '').replace(/[\s　]+/g, '');
+  if (!name) return;
+  const re = new RegExp(`※${escRe(name)}交換実施。?(?:[（(][^）)]*[）)])?`);
+  const lines = String(data.note || '') ? String(data.note).split('\n') : [];
+  const i = lines.findIndex(l => re.test(l));
+  if (on) {
+    const t = new Date();
+    const text = `※${name}交換実施(${t.getFullYear()}/${String(t.getMonth() + 1).padStart(2, '0')}/${String(t.getDate()).padStart(2, '0')})`;
+    if (i >= 0) lines[i] = lines[i].replace(re, text); else lines.push(text);
+  } else if (i >= 0) {
+    const rest = lines[i].replace(re, '').replace(/^[\s　]+|[\s　]+$/g, '');
+    if (rest) lines[i] = rest; else lines.splice(i, 1);
+  }
+  data.note = lines.join('\n');
+}
+
+// ---- 耐圧・漏洩・気密試験（調節弁）。ふだんは表示だけ（グレー）。「編集」を押すと入力でき、入力するとExcelに書く ----
+const VALVE_TESTS = [
+  { g: '耐圧試験', n: '水圧', u: 'min' }, { g: '耐圧試験', n: '空気圧', u: 'min' },
+  { g: '漏洩試験', n: '水圧', u: 'min' }, { g: '漏洩試験', n: '空気圧', u: 'min' },
+  { g: '漏洩試験', n: '許容漏洩量', u: 'L/min' }, { g: '漏洩試験', n: '実測漏洩量', u: 'L/min' },
+  { g: '駆動部気密試験', n: '空気圧', u: 'min' },
+];
+function testsSection(d, data, editable) {
+  const on = editable && view.testsEdit;
+  const dis = on ? '' : 'disabled';
+  const prev = d.info.prev.tests || [];
+  return `<h3>耐圧・漏洩・気密試験 <small>${data.testsEdited ? '入力あり（Excelに書き込みます）' : 'ふだんは入力不要'}</small></h3>
+    <div class="vtests ${on ? '' : 'off'}">
+      <div class="vt head"><span></span><span>kPa</span><span>時間・量</span><span>判定</span></div>
+      ${VALVE_TESTS.map((t, i) => {
+        const v = data.tests[i] || {};
+        const p = prev[i] || {};
+        return `<div class="vt"><span class="vl">${t.n === '空気圧' || t.n === '水圧' ? h(t.g.replace('試験', '')) + '<br>' : ''}${h(t.n)}</span>
+          <input class="num" inputmode="decimal" data-k="tests.${i}.p" value="${h(v.p)}" placeholder="${h(fmt(p.p))}" ${dis}>
+          <input class="num" inputmode="decimal" data-k="tests.${i}.t" value="${h(v.t)}" placeholder="${h(fmt(p.t) ? fmt(p.t) + ' ' + t.u : t.u)}" ${dis}>
+          <select data-k="tests.${i}.j" ${dis}>${opts(['', '良', '否'], v.j || '').replace('<option ', '<option value="" ').replace('></option>', '>－</option>')}</select></div>`;
+      }).join('')}
+    </div>
+    ${editable ? `<button type="button" class="btn small" data-act="testsedit">${on ? '編集を終える' : '耐圧・漏洩・気密試験を編集'}</button>` : ''}`;
+}
 
 // 目視確認する機器情報（調節弁番号・型番・製造番号・製造年月）。現場で違っていたら変更できる
 const checkName = (d, c) => (c.panel != null && d.info.panels && d.info.panels[c.panel] ? d.info.panels[c.panel].name + ' ' : '') + c.label;
@@ -1073,7 +1128,14 @@ function infoCard(d) {
     ${row('No.', h(i.no) + '（' + h(d.sheet) + '）' + (i.kanri ? '　管理番号 ' + h(i.kanri) : ''))}
     ${row('場所', h(i.loc))}${row('型番', h(i.model))}${row('製造番号', h(i.serial))}
     ${row('範囲', (i.ranges || []).map(h).join('<br>'))}
-    ${row('精度', i.accuracy != null ? '±' + h(i.accuracy) + ' %F.S' : '')}${row('前回', prev)}</dl>${detailsBlock(i)}</section>`;
+    ${row('精度', accuracyText(i))}${row('前回', prev)}</dl>${detailsBlock(i)}</section>`;
+}
+
+// 精度：報告書の書き方どおり（例：±1 ﾃﾞｼﾞｯﾄ　±0.5 ％ F.S）。登録データが古い場合は %F.S だけ
+function accuracyText(i) {
+  const d = (i.details || []).find(x => x.label === '精度');
+  if (d) return h(d.value);
+  return i.accuracy != null ? '±' + h(i.accuracy) + ' %F.S' : '';
 }
 
 // 「詳細を表示」：報告書上部の機器情報をすべて、1項目ずつ縦に並べて出す
@@ -1212,6 +1274,7 @@ function form(d, data, editable) {
     } else {
       html += `<div class="grid2" style="margin-top:12px">
         <label>判定<select data-k="judge" ${dis}>${opts(['良好', '動作不良'], data.judge)}</select></label></div>`;
+      html += testsSection(d, data, editable);
     }
     html += partsSection(d, data, editable);
   }
@@ -1504,7 +1567,7 @@ document.addEventListener('click', async e => {
   }
   else if (act === 'filter') { view.filter = b.dataset.f; store.set('filter', view.filter); render(); }
   else if (act === 'refresh') withBusy('更新しています…', () => refresh());
-  else if (act === 'open') { view.from = view.screen; view.screen = 'detail'; view.id = b.dataset.id; view.details = false; view.partsEdit = false; view.showMissing = false; render(); window.scrollTo(0, 0); }
+  else if (act === 'open') { view.from = view.screen; view.screen = 'detail'; view.id = b.dataset.id; view.details = false; view.partsEdit = false; view.testsEdit = false; view.showMissing = false; render(); window.scrollTo(0, 0); }
   else if (act === 'start') startWork(false);
   else if (act === 'reopen') { if (confirm('完了済みの機器を修正のため再開します。よろしいですか？')) startWork(true); }
   else if (act === 'release') releaseWork();
@@ -1564,7 +1627,14 @@ document.addEventListener('click', async e => {
   }
   else if (act === 'fieldedit') editField(b.dataset.key);
   else if (act === 'fieldok') editDraft(data => { const k = b.dataset.key; data.fields[k] = Object.assign({}, data.fields[k], { ok: !(data.fields[k] && data.fields[k].ok) }); });
-  else if (act === 'replaced') editDraft(data => { const n = b.dataset.n; if (data.replaced[n]) delete data.replaced[n]; else data.replaced[n] = true; });
+  else if (act === 'replaced') {
+    editDraft(data => {
+      const n = b.dataset.n;
+      if (data.replaced[n]) delete data.replaced[n]; else data.replaced[n] = true;
+      applyReplaced(getDev(view.id), data, n, !!data.replaced[n]);
+    });
+  }
+  else if (act === 'testsedit') { view.testsEdit = !view.testsEdit; renderDetail(); }
 });
 
 function onEdit(e) {
@@ -1581,6 +1651,7 @@ function onEdit(e) {
   const dr = drafts[view.id];
   if (!dr || t.disabled) return;
   setPath(dr.data, k, t.type === 'checkbox' ? t.checked : t.value);
+  if (k.startsWith('tests.')) dr.data.testsEdited = true;
   const clock = k.match(/^panels\.(\d+)\.clock(Dir|Min)$/);
   if (clock) {
     const p = dr.data.panels[clock[1]];
