@@ -143,6 +143,10 @@ table.pt input { width: 100%; text-align: right; padding: 8px 5px; }
 .ditem { padding: 7px 0; border-bottom: 1px dashed var(--line); }
 .ditem .dl { font-size: 12px; color: var(--sub); }
 .ditem .dv { font-size: 15px; word-break: break-all; }
+/* 最後に入力した温度（流用） */
+.lasttemp { display: flex; align-items: center; gap: 8px; margin: -4px 0 10px; font-size: 12px; color: var(--sub); }
+.lasttemp span { flex: 1; min-width: 0; }
+.lasttemp button { flex: none; padding: 6px 10px; border: 1px solid var(--pri); border-radius: 99px; background: #fff; color: var(--pri); font-size: 13px; font-weight: 700; }
 /* 耐圧・漏洩・気密試験（ふだんはグレー表示） */
 .vt { display: grid; grid-template-columns: minmax(0, 1fr) 64px 76px 56px; gap: 6px; align-items: center; margin-bottom: 6px; }
 .vt.head span { font-size: 11px; color: var(--sub); text-align: center; }
@@ -469,6 +473,21 @@ function notePreview(d, text) {
   return `Excelの記事欄（${caps.length}行）での見え方：長い行は自動で折り返します
     ${lines.length ? `<ol>${lines.map((l, n) => `<li class="${n >= caps.length ? 'over' : ''}">${h(l)}</li>`).join('')}</ol>` : ''}
     ${over > 0 ? `<div class="ng">記事欄に入りきりません（${over} 行はみ出しています）。はみ出した分はExcelに書き込まれません。</div>` : ''}`;
+}
+
+// ---- 温度の流用。この iPhone で最後に手入力した温度（値・時刻・場所）を覚えておき、別の機器で「この温度を使う」で入れられる ----
+function rememberTemp(d, v) {
+  if (!String(v).trim()) return;
+  store.set('lastTemp', { v: String(v).trim(), at: Date.now(), loc: (d.info && d.info.loc) || '', tag: d.tag || '' });
+}
+function lastTempBlock() {
+  const t = store.get('lastTemp', null);
+  if (!t) return '';
+  const at = new Date(t.at);
+  const when = `${at.getMonth() + 1}/${at.getDate()} ${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+  const tag = String(t.tag || '').split(/[\s　]/)[0];  // 「TIC-901　温水温度…」の番号だけ
+  return `<div class="lasttemp"><span>最後に入力した温度 <b>${h(t.v)}℃</b>（${h(when)}・${h([t.loc, tag].filter(Boolean).join(' '))}）</span>
+    <button type="button" data-act="usetemp">この温度を使う</button></div>`;
 }
 
 // 「交換済み」ボタンを付ける部品（フィルター・パッキン類）
@@ -1002,7 +1021,7 @@ function itemButton(d) {
   const s = localStatus(d);
   const mine = d.status === ST.WORK && d.worker === cfg.name;
   return `<button class="item ${mine ? 'mine' : ''}" data-act="open" data-id="${h(d.id)}">
-    <div class="main"><div class="tag">${h(d.tag)}</div><div class="sub">${h(d.title)}</div></div>
+    <div class="main"><div class="tag">${h(d.tag)}</div><div class="sub">${h(d.title)}${d.kind !== KIND.TOUCH && d.info && d.info.loc ? '（' + h(d.info.loc) + '）' : ''}</div></div>
     <span class="badge st-${s.cls}">${h(s.text)}</span></button>`;
 }
 
@@ -1228,6 +1247,7 @@ function form(d, data, editable) {
       ${showTemp ? `<label>温度 (℃)<input class="num" inputmode="decimal" data-k="temp" value="${h(data.temp)}" placeholder="${h(fmt(i.prev.temp))}" ${dis}>
         <div class="hint"><span class="prev">${i.prev.temp != null ? '前回 ' + h(fmt(i.prev.temp)) + '℃' : ''}</span></div></label>` : ''}
     </div>
+    ${showTemp && editable ? lastTempBlock() : ''}
     ${showDate ? '' : '<p class="muted">この報告書には試験日の欄がありません。</p>'}`;
   // 並び：試験日・温度 → 機器情報の確認 → PV（計器）→ 時刻合わせ（記録計）
   const checks = i.checks || [];
@@ -1635,6 +1655,7 @@ document.addEventListener('click', async e => {
     });
   }
   else if (act === 'testsedit') { view.testsEdit = !view.testsEdit; renderDetail(); }
+  else if (act === 'usetemp') { const t = store.get('lastTemp', null); if (t) editDraft(data => { data.temp = t.v; }); }
 });
 
 function onEdit(e) {
@@ -1652,6 +1673,7 @@ function onEdit(e) {
   if (!dr || t.disabled) return;
   setPath(dr.data, k, t.type === 'checkbox' ? t.checked : t.value);
   if (k.startsWith('tests.')) dr.data.testsEdited = true;
+  if (k === 'temp') rememberTemp(getDev(view.id), t.value);  // 手で入力した温度だけを「最後に入力した温度」にする
   const clock = k.match(/^panels\.(\d+)\.clock(Dir|Min)$/);
   if (clock) {
     const p = dr.data.panels[clock[1]];
@@ -1687,6 +1709,22 @@ document.addEventListener('change', e => { if (e.target.tagName === 'SELECT' || 
 const kb = $('#kbbar');
 const kbpre = $('#kbpre');
 let activeNum = null;
+// 「次へ」「前へ」の順番：測定値の表は UP を上から下へ、続けて DOWN を下から上へ。ほかの欄は画面の並びのまま
+function navInputs() {
+  const out = [];
+  const done = new Set();
+  document.querySelectorAll('input.num:not(:disabled)').forEach(el => {
+    if (done.has(el)) return;
+    const tbl = el.closest('table.pt');
+    if (!tbl) { out.push(el); return; }
+    const ins = [...tbl.querySelectorAll('input.num:not(:disabled)')];
+    const ups = ins.filter(x => /\.(up|adjUp)\.\d+$/.test(x.dataset.k));
+    const downs = ins.filter(x => /\.(down|adjDown)\.\d+$/.test(x.dataset.k)).reverse();
+    [...ups, ...downs].forEach(x => { out.push(x); done.add(x); });
+  });
+  return out;
+}
+
 function placeKb() {
   const vv = window.visualViewport;
   const top = vv ? vv.offsetTop + vv.height - kb.offsetHeight : window.innerHeight - kb.offsetHeight;
@@ -1711,7 +1749,7 @@ kb.addEventListener('pointerdown', e => e.preventDefault());  // 押してもキ
 kb.addEventListener('click', e => {
   const b = e.target.closest('[data-kb]');
   if (!b || !activeNum) return;
-  const inputs = [...document.querySelectorAll('input.num:not(:disabled)')];
+  const inputs = navInputs();
   const idx = inputs.indexOf(activeNum);
   const set = v => { activeNum.value = v; activeNum.dispatchEvent(new Event('input', { bubbles: true })); };
   if (b.dataset.kb === 'sign') {
