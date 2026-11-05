@@ -61,6 +61,21 @@ textarea { min-height: 120px; resize: vertical; }
 .item .sub { font-size: 13px; color: var(--sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .badge { flex: none; font-size: 12px; font-weight: 700; color: #fff; padding: 3px 9px; border-radius: 99px; max-width: 45%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .st-todo { background: var(--todo); } .st-work { background: var(--work); } .st-done { background: var(--done); } .st-pend { background: #e08a00; }
+.st-wait { background: #7b4fb8; } .st-temp { background: #2f6fa8; }
+/* 通信中の表示 */
+.busy { position: fixed; inset: 0; z-index: 40; background: rgba(0,0,0,.25); display: flex; align-items: center; justify-content: center; }
+.busy .box { background: #fff; border-radius: 14px; padding: 18px 26px; display: flex; flex-direction: column; align-items: center; gap: 10px; font-weight: 700; }
+.busy .spin { width: 34px; height: 34px; border: 4px solid #d5dbe3; border-top-color: var(--pri); border-radius: 50%; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+/* 未記入の強調（完了しようとしたとき） */
+.missing { border: 2px solid var(--ng) !important; background-color: #fff5f5 !important; }
+.names.pick.missing, .crow.missing { border-radius: 8px; padding: 4px; }
+/* 日本標準時 */
+.jst-time { font-size: 40px; font-weight: 700; text-align: center; font-variant-numeric: tabular-nums; letter-spacing: 1px; }
+.jst-date { text-align: center; color: var(--sub); }
+.jst-note { font-size: 12px; color: var(--sub); text-align: center; margin-top: 6px; }
+/* PV（記事に反映） */
+.pv { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 8px; }
 dl.info { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 12px; margin: 8px 0 0; font-size: 14px; }
 dl.info dt { color: var(--sub); }
 dl.info dd { margin: 0; word-break: break-all; }
@@ -234,12 +249,25 @@ function checkReset(resetId) {
   const known = store.get('resetId', null);
   if (known === resetId) return;
   store.set('resetId', resetId);
-  if (resetId && Object.keys(drafts).length) {
-    drafts = {};
+  if (!resetId) return;
+  // resetId は「日時|工場名」。工場名があればその工場の分だけ、無ければすべて捨てる
+  const plant = String(resetId).split('|')[1] || '';
+  const ids = Object.keys(drafts).filter(id => { const d = getDev(id); return !plant || !d || plantOf(d) === plant; });
+  if (ids.length) {
+    ids.forEach(id => delete drafts[id]);
     saveDrafts();
     renderNet();
-    setTimeout(() => { alert('事務所でデータが初期化されました。この端末に残っていた入力途中のデータは消去しました。'); render(); }, 0);
+    setTimeout(() => { alert(`${plant || '全工場'}のデータが初期化されました。この端末に残っていた入力途中のデータは消去しました。`); render(); }, 0);
   }
+}
+
+// 通信中の表示（作業開始など、画面が変わるまで時間がかかる操作で「押せたか」分かるように）
+async function withBusy(label, fn) {
+  const el = document.createElement('div');
+  el.className = 'busy';
+  el.innerHTML = `<div class="box"><div class="spin"></div><div>${h(label)}</div></div>`;
+  document.body.appendChild(el);
+  try { return await fn(); } finally { el.remove(); }
 }
 
 // 設定コード「KENSA1:<base64>」を { api, key } に戻す。URLだけを貼った場合はそのまま使う
@@ -356,6 +384,8 @@ function normalize(d, data) {
   out.inspectors = (out.inspectors || []).filter(n => n && n !== out.worker).slice(0, MAX_STAMPS - 1);
   out.replaced = out.replaced || {};
   out.fields = out.fields || {};
+  out.pv = Object.assign({ filter: '', bias: '' }, out.pv);
+  out.pv.v = Array.isArray(out.pv.v) ? out.pv.v : [];
   out.ch = (d.info.chs || []).map((_, k) => Object.assign(emptyCh(), ((data && data.ch) || [])[k] || {}));
   if (d.kind === KIND.TOUCH) {
     out.panels = (d.info.panels || []).map((_, b) => Object.assign(
@@ -448,13 +478,143 @@ function partsSection(d, data, editable) {
   return html;
 }
 
+// ---- PVフィルタ・PVバイアス・検査時PV（計器）。入力すると記事の該当箇所に反映する ----
+//   記事に「PVﾌｨﾙﾀ：0.0」等があれば値だけ書き換え、無ければ PV の行（無ければ先頭の新しい行）に足す
+const PV_NOTE_LABEL = { filter: 'PVﾌｨﾙﾀ', bias: 'PVﾊﾞｲｱｽ' };
+function pvRegex(key, k, nCh) {
+  if (key === 'filter') return /PVﾌｨﾙﾀｰ?：[^\s　]*/;
+  if (key === 'bias') return /PVﾊﾞｲｱｽ：[^\s　]*/;
+  return nCh > 1 ? new RegExp(`検査時PV[（(]CH${k + 1}[）)]：[^\\s　]*`) : /検査時PV(?:[（(]CH1[）)])?：[^\s　]*/;
+}
+const pvTokenValue = t => t.slice(t.indexOf('：') + 1);
+function pvItems(d) {
+  const n = (d.info.chs || []).length || 1;
+  const items = [{ key: 'filter', path: 'pv.filter', label: 'PVフィルタ' }, { key: 'bias', path: 'pv.bias', label: 'PVバイアス' }];
+  for (let k = 0; k < n; k++) {
+    items.push({ key: 'pv', k, path: `pv.v.${k}`, label: '検査時PV' + (n > 1 ? `（CH${k + 1}）` : ''), unit: ((d.info.chs || [])[k] || {}).unitDisp || '' });
+  }
+  return items;
+}
+const pvInput = (data, it) => String((it.key === 'pv' ? data.pv.v[it.k] : data.pv[it.key]) || '').trim();
+
+function pvFields(d, data, editable) {
+  const dis = editable ? '' : 'disabled';
+  const prevNote = (d.info.prev.note || []).join('\n');
+  const n = (d.info.chs || []).length || 1;
+  return `<div class="pv">${pvItems(d).map(it => {
+    const m = prevNote.match(pvRegex(it.key, it.k, n));
+    const prev = m ? pvTokenValue(m[0]) : '';
+    return `<label>${h(it.label)}${it.unit ? ` (${h(it.unit)})` : ''}<input class="num" inputmode="decimal" data-k="${it.path}" value="${h(pvInput(data, it))}" placeholder="${h(prev.replace(/[^\d.+\-]/g, ''))}" ${dis}>
+      <div class="hint"><span class="prev">${prev ? '前回 ' + h(prev) : ''}</span></div></label>`;
+  }).join('')}</div><p class="muted" style="margin:-4px 0 8px">PV の値は入力すると記事に反映されます。</p>`;
+}
+
+function applyPv(d, data) {
+  let note = String(data.note || '');
+  const n = (d.info.chs || []).length || 1;
+  const add = [];
+  pvItems(d).forEach(it => {
+    const v = pvInput(data, it);
+    if (!v) return;
+    const re = pvRegex(it.key, it.k, n);
+    const m = note.match(re);
+    if (m) {
+      const label = m[0].slice(0, m[0].indexOf('：'));
+      const unit = pvTokenValue(m[0]).replace(/^[-+]?[\d.]*/, '');  // 「16.3℃」の ℃ など、元の書き方を残す
+      note = note.replace(re, `${label}：${v}${unit}`);
+    } else {
+      const label = it.key === 'pv' ? (n > 1 ? `検査時PV（CH${it.k + 1}）` : '検査時PV') : PV_NOTE_LABEL[it.key];
+      add.push(`${label}：${v}${it.unit || ''}`);
+    }
+  });
+  if (add.length) {
+    const lines = note ? note.split('\n') : [];
+    const i = lines.findIndex(l => /PVﾌｨﾙﾀ|PVﾊﾞｲｱｽ|検査時PV/.test(l));
+    if (i >= 0) lines[i] = lines[i].replace(/[\s　]+$/, '') + '　' + add.join('　');
+    else lines.unshift(add.join('　'));
+    note = lines.join('\n');
+  }
+  data.note = note;
+}
+
+// ---- 日本標準時（NICT）。NICT の時計ページと同じ時刻サーバーから時刻を取り、iPhone の時計とのずれを補正して表示する ----
+const NICT_HOSTS = ['3fe5a5f690efc790d4764f1c528a4ebb89fa4168', '67495dde3b39c2991829589f0101ab7a035eecf5', '08a08e3a6edef4ba7a0c055a42d8e1ba2597f2b5'];
+async function nictOffset() {
+  for (const host of NICT_HOSTS) {
+    try {
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 3000);
+      const it = Date.now();
+      const res = await fetch(`https://${host}.nict.go.jp/cgi-bin/json?${it / 1000}`, { signal: ctl.signal, cache: 'no-store' });
+      const j = await res.json();
+      const rt = Date.now();
+      clearTimeout(timer);
+      if (j.st) return { offset: j.st * 1000 - (it + rt) / 2, rtt: rt - it };  // 片道の時間を差し引いた、JST − iPhone の時計
+    } catch (e) { /* 次のサーバーを試す */ }
+  }
+  return null;
+}
+
+function showJst() {
+  const el = document.createElement('div');
+  el.className = 'modal';
+  el.innerHTML = `<div class="box"><div class="msg" style="font-weight:700">日本標準時（JST）　NICT</div>
+    <div class="jst-time" id="jst-time">--:--:--</div><div class="jst-date" id="jst-date">取得中…</div>
+    <div class="jst-note" id="jst-note"></div>
+    <button class="btn" data-jst="close">閉じる</button></div>`;
+  document.body.appendChild(el);
+  let offset = null;
+  let timer = null;
+  const p2 = n => String(n).padStart(2, '0');
+  const tick = () => {
+    const t = new Date(Date.now() + offset + 9 * 3600 * 1000);  // UTC の値として JST の日時を読む
+    el.querySelector('#jst-time').textContent = `${p2(t.getUTCHours())}:${p2(t.getUTCMinutes())}:${p2(t.getUTCSeconds())}`;
+    el.querySelector('#jst-date').textContent = `${t.getUTCFullYear()}年${t.getUTCMonth() + 1}月${t.getUTCDate()}日（${'日月火水木金土'[t.getUTCDay()]}）`;
+  };
+  const close = () => { clearInterval(timer); el.remove(); };
+  el.addEventListener('click', e => { if (e.target === el || e.target.closest('[data-jst=close]')) close(); });
+  nictOffset().then(r => {
+    if (!el.isConnected) return;
+    if (!r) { el.querySelector('#jst-date').textContent = '取得できませんでした（圏外の可能性があります）'; return; }
+    offset = r.offset;
+    tick();
+    timer = setInterval(tick, 100);
+    const s = Math.abs(offset / 1000);
+    el.querySelector('#jst-note').textContent = s < 0.5 ? 'このiPhoneの時計はほぼ正確です'
+      : `このiPhoneの時計は ${s.toFixed(1)} 秒${offset > 0 ? '遅れて' : '進んで'}います（表示は補正済み）`;
+  });
+}
+
+// ---- データ初期化（パスワードはサーバー側で確認する）----
+async function resetData() {
+  const pass = await askText('データ初期化のパスワードを入力してください。', '', 'password');
+  if (pass == null || !pass.trim()) return;
+  try {
+    await withBusy('確認しています…', () => api('resetPlant', { pass: pass.trim(), check: true }));
+  } catch (e) {
+    return alert(e.code === 'offline' ? 'データ初期化には電波が必要です。' : e.message);
+  }
+  const plants = [...new Set(devices.map(plantOf))].sort(byName);
+  const p = await choose('初期化する工場（年度）を選んでください。',
+    plants.map(x => ({ key: x, label: plantLabel(x), cls: 'warn' })).concat([{ key: '__cancel', label: 'キャンセル' }]));
+  if (!p || p === '__cancel') return;
+  if (!confirm(`「${plantLabel(p)}」で、このアプリに入力された情報（測定値・作業中・一時保存・完了の記録）をすべて消して、未着手に戻します。\nExcelのファイルは変わりません。元に戻せません。よろしいですか？`)) return;
+  try {
+    const j = await withBusy('初期化しています…', () => api('resetPlant', { plant: p, pass: pass.trim() }));
+    alert(`初期化しました（${j.reset} 件を未着手に戻しました）。`);
+  } catch (e) {
+    alert(e.message);
+  }
+  await refresh(true);
+}
+
 // 画面下からせり上がる入力ダイアログ。OK なら入力した文字、キャンセルなら null を返す
-function askText(message, value) {
+function askText(message, value, type) {
   return new Promise(resolve => {
     const el = document.createElement('div');
     el.className = 'modal';
     el.innerHTML = `<div class="box"><div class="msg">${h(message)}</div>
-      <input id="ask-in" type="text" autocomplete="off" style="width:100%" value="${h(value)}">
+      <input id="ask-in" type="${type === 'password' ? 'password' : 'text'}" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" style="width:100%" value="${h(value)}">
       <button class="btn primary" data-ask="ok">OK</button><button class="btn" data-ask="cancel">キャンセル</button></div>`;
     const done = v => { el.remove(); resolve(v); };
     el.addEventListener('click', e => {
@@ -497,22 +657,14 @@ function localStatus(d) {
   if (dr && dr.finish && dr.pending) return { cls: 'pend', text: '完了(未送信)' };
   if (d.status === ST.WORK) return { cls: 'work', text: d.worker === cfg.name ? '作業中(自分)' : '作業中 ' + d.worker };
   if (d.status === ST.DONE) return { cls: 'done', text: '完了' };
+  // 中断（保存）されたもの：確認ボタンや交換済みを押してあれば「動作確認待ち」、それ以外は「一時保存(名前)」
+  if (d.data && d.worker) return waitingCheck(d) ? { cls: 'wait', text: '動作確認待ち' } : { cls: 'temp', text: `一時保存(${d.worker})` };
   return { cls: 'todo', text: '未着手' };
 }
 
-function countBlanks(d, data) {
-  let n = 0;
-  data.ch.forEach(c => {
-    const keys = c.adj ? [['up', 'down'], ['adjUp', 'adjDown']] : [['up', 'down']];
-    keys.forEach(([u, dn]) => {
-      for (let i = 0; i < 5; i++) {
-        if (String(c[u][i]).trim() === '') n++;
-        if (i < 4 && String(c[dn][i]).trim() === '') n++;
-      }
-    });
-  });
-  return n;
-}
+const waitingCheck = d => (d.kind === KIND.KEIKI || d.kind === KIND.VALVE) && !!d.data &&
+  (Object.values(d.data.fields || {}).some(f => f && f.ok) || Object.keys(d.data.replaced || {}).length > 0);
+
 
 // ---- 画面 ----
 function render() {
@@ -588,7 +740,8 @@ function renderPlants() {
     ${plants.map(p => menuItem('plant', p, plantLabel(p), devices.filter(d => plantOf(d) === p))).join('') || '<p class="muted">機器が登録されていません</p>'}
     <div class="muted">更新 ${h(hm(fetchedAt))}</div>
     <button class="btn" data-act="refresh">一覧を更新</button>
-    <button class="btn" data-act="logout" style="margin-top:24px">名前を変更する</button>`;
+    <button class="btn" data-act="logout" style="margin-top:24px">名前を変更する</button>
+    <button class="btn warn" data-act="resetdata">データ初期化</button>`;
 }
 
 function renderLocs() {
@@ -739,7 +892,10 @@ function renderDetail() {
     data = normalize(d, d.data);
     actions = `<button class="btn" data-act="reopen">修正のため再開する</button>`;
   } else {
-    head = `<div class="notice">この機器は未着手です。「作業開始」を押すと、他の人は入力できなくなります。</div>`;
+    const st = localStatus(d);
+    head = st.cls === 'wait' || st.cls === 'temp'
+      ? `<div class="notice">${h(st.text)}：${h(d.worker)} さんが途中まで入力して中断しています（${h(hm(d.updatedAt))}）。「作業開始」で続きから入力できます。</div>`
+      : `<div class="notice">この機器は未着手です。「作業開始」を押すと、他の人は入力できなくなります。</div>`;
     data = d.data ? normalize(d, d.data) : null;
     actions = `<button class="btn primary" data-act="start">作業開始</button>`;
   }
@@ -748,6 +904,7 @@ function renderDetail() {
     ${data ? `<section class="card">${form(d, data, editable)}</section>` : ''}
     <div class="actions"><div class="inner">${actions}</div></div>`;
   if (data) updateDevs(d, data);
+  markMissing();
 }
 
 // ---- 入力フォーム ----
@@ -784,7 +941,8 @@ function form(d, data, editable) {
       ${showTemp ? `<label>温度 (℃)<input class="num" inputmode="decimal" data-k="temp" value="${h(data.temp)}" placeholder="${h(fmt(i.prev.temp))}" ${dis}>
         <div class="hint"><span class="prev">${i.prev.temp != null ? '前回 ' + h(fmt(i.prev.temp)) + '℃' : ''}</span></div></label>` : ''}
     </div>
-    ${showDate ? '' : '<p class="muted">この報告書には試験日の欄がありません。</p>'}`;
+    ${showDate ? '' : '<p class="muted">この報告書には試験日の欄がありません。</p>'}
+    ${d.kind === KIND.KEIKI ? pvFields(d, data, editable) : ''}`;
   const checks = i.checks || [];
   const checkHelp = '<small>現物と見比べて「確認」。違っていたら「変更」（報告書のセルが黄色になります）</small>';
   if (d.kind !== KIND.TOUCH && checks.length) html += `<h3>機器情報の確認 ${checkHelp}</h3>${checkRows(data, checks, editable)}`;
@@ -799,14 +957,18 @@ function form(d, data, editable) {
               <select data-k="panels.${b}.clockDir" ${dis}>${opts(['良好', '遅れ', '進み'], pd.clockDir)}</select></div>
             ${pd.clockDir && pd.clockDir !== '良好' ? `<div class="pclock"><span>ずれ（分）</span>
               <input class="num" inputmode="decimal" data-k="panels.${b}.clockMin" value="${h(pd.clockMin)}" placeholder="分" ${dis}></div>` : ''}
-            <div class="ptext" data-ptext="${b}">${h(pd.items[2])}</div>`;
+            <div class="ptext">(今回)<span data-ptext="${b}">${h(pd.items[2])}</span></div>
+            <div class="ptext">(前回)${h((p.prev || [])[2] || '')}</div>`;
         }
-        return `<div class="pitem"><span>${h(label)}</span><select data-k="panels.${b}.items.${j}" ${dis}>${opts(['良好', '不良'], pd.items[j])}</select></div>`;
+        // 画面切り替えの下に、日本標準時（NICT）を表示するボタン
+        const jst = j === 3 ? '<button type="button" class="btn small" data-act="jst">日本標準時間</button>' : '';
+        return `<div class="pitem"><span>${h(label)}</span><select data-k="panels.${b}.items.${j}" ${dis}>${opts(['良好', '不良'], pd.items[j])}</select></div>${jst}`;
       }).join('');
       const pc = checks.filter(c => c.panel === b);
+      const prevNg = (p.prev || []).filter((x, j) => j !== 2 && x && x !== '良好');
       return `<div class="panel"><div class="pname">${h(p.name)}</div>
         ${pc.length ? checkRows(data, pc, editable) : `<div class="muted">${h(p.model)}　${h(p.serial)}${p.made ? '　' + h(p.made) : ''}</div>`}${items}
-        <div class="ptext">前回：${h((p.prev || []).filter(x => x && x !== '良好').join('／') || 'すべて良好')}</div></div>`;
+        ${prevNg.length ? `<div class="ptext">前回（時計以外）：${h(prevNg.join('／'))}</div>` : ''}</div>`;
     }).join('');
   } else {
     i.chs.forEach((ch, k) => {
@@ -831,9 +993,9 @@ function form(d, data, editable) {
   const sel = data.inspectors;
   const pick = [...new Set(names.concat(sel, data.worker ? [data.worker] : []))];
   html += `<h3>作業員 <small>報告書の検査・作業員欄の一番右に印影が入ります</small></h3>
-    <div class="names pick">${pick.map(n => `<button type="button" class="${data.worker === n ? 'on' : ''}" data-act="worker" data-name="${h(n)}" ${dis}>${h(n)}</button>`).join('')}</div>
+    <div class="names pick" id="worker-group">${pick.map(n => `<button type="button" class="${data.worker === n ? 'on' : ''}" data-act="worker" data-name="${h(n)}" ${dis}>${h(n)}</button>`).join('')}</div>
     <h3>検査員 <small>押した順に、右から2番目の枠から左へ印影が入ります（最大${MAX_STAMPS - 1}名）</small></h3>
-    <div class="names pick">${pick.map(n => {
+    <div class="names pick" id="insp-group">${pick.map(n => {
       const k = sel.indexOf(n);
       return `<button type="button" class="${k >= 0 ? 'on' : ''}" data-act="insp" data-name="${h(n)}" ${dis}>${k >= 0 ? (k + 1) + '. ' : ''}${h(n)}</button>`;
     }).join('')}</div>
@@ -860,7 +1022,7 @@ function updateDevs(d, data) {
 async function startWork(reopen) {
   const id = view.id;
   try {
-    const j = await api('start', { id, reopen: !!reopen });
+    const j = await withBusy('作業開始中…', () => api('start', { id, reopen: !!reopen }));
     updateDevice(j.device);
     const dr = drafts[id];
     if (dr) {
@@ -883,7 +1045,7 @@ function choose(message, options) {
     const el = document.createElement('div');
     el.className = 'modal';
     el.innerHTML = `<div class="box"><div class="msg">${h(message)}</div>
-      ${options.map(o => `<button class="btn ${o.cls || ''}" data-choose="${o.key}">${h(o.label)}</button>`).join('')}</div>`;
+      ${options.map(o => `<button class="btn ${o.cls || ''}" data-choose="${h(o.key)}">${h(o.label)}</button>`).join('')}</div>`;
     el.addEventListener('click', e => {
       const b = e.target.closest('[data-choose]');
       if (!b && e.target !== el) return;
@@ -905,8 +1067,10 @@ async function releaseWork() {
   const id = view.id;
   try {
     const dr = drafts[id];
-    if (c === 'save' && dr && dr.pending) await api('save', { id, data: dr.data, finish: false });
-    const j = await api('release', { id, discard: c === 'discard' });
+    const j = await withBusy('中断しています…', async () => {
+      if (c === 'save' && dr && dr.pending) await api('save', { id, data: dr.data, finish: false });
+      return api('release', { id, discard: c === 'discard' });
+    });
     updateDevice(j.device);
     delete drafts[id];
     saveDrafts();
@@ -921,7 +1085,7 @@ async function forceRelease() {
   const d = getDev(view.id);
   if (!confirm(`${d.worker} さんの作業を強制的に解除します。\n${d.worker} さんのiPhoneに未送信の入力が残っている場合、その人は「作業を再開」が必要になります。\n本人に確認しましたか？`)) return;
   try {
-    const j = await api('forceRelease', { id: d.id });
+    const j = await withBusy('解除しています…', () => api('forceRelease', { id: d.id }));
     updateDevice(j.device);
   } catch (e) {
     alert(e.code === 'offline' ? '強制解除には電波が必要です。' : e.message);
@@ -929,20 +1093,62 @@ async function forceRelease() {
   render();
 }
 
+// 完了前に確認する未記入の箇所。調整したチェック（と調整しない場合の調整後の値）、2人目以降の検査員は対象外
+function findMissing(d, data) {
+  const keys = [];
+  data.ch.forEach((c, k) => {
+    const pairs = c.adj ? [['up', 'down'], ['adjUp', 'adjDown']] : [['up', 'down']];
+    pairs.forEach(([u, dn]) => {
+      for (let i = 0; i < 5; i++) {
+        if (String(c[u][i]).trim() === '') keys.push(`ch.${k}.${u}.${i}`);
+        if (i < 4 && String(c[dn][i]).trim() === '') keys.push(`ch.${k}.${dn}.${i}`);
+      }
+    });
+  });
+  const temp = d.kind !== KIND.VALVE && String(data.temp || '').trim() === '';
+  if (temp) keys.push('temp');
+  const checks = (d.info.checks || []).filter(c => !fieldOf(data, c).ok).map(c => c.key);
+  const msg = [];
+  const meas = keys.filter(k => k.startsWith('ch.')).length;
+  if (meas) msg.push(`・測定値 ${meas} か所`);
+  if (temp) msg.push('・温度');
+  if (checks.length) msg.push(`・機器情報の「確認」 ${checks.length} 件`);
+  if (!data.worker) msg.push('・作業員');
+  if (!data.inspectors.length) msg.push('・検査員（1名以上）');
+  return { keys, checks, worker: !data.worker, insp: !data.inspectors.length, msg };
+}
+
+// 未記入の箇所を赤枠にする（完了しようとした後だけ。入力するたびに更新）
+function markMissing() {
+  document.querySelectorAll('.missing').forEach(el => el.classList.remove('missing'));
+  const d = getDev(view.id);
+  const dr = drafts[view.id];
+  if (!view.showMissing || !d || !dr) return;
+  const m = findMissing(d, dr.data);
+  m.keys.forEach(k => { const el = document.querySelector(`[data-k="${k}"]`); if (el) el.classList.add('missing'); });
+  m.checks.forEach(k => { const b = document.querySelector(`[data-act=fieldok][data-key="${k}"]`); if (b) b.closest('.crow').classList.add('missing'); });
+  if (m.worker) { const g = $('#worker-group'); if (g) g.classList.add('missing'); }
+  if (m.insp) { const g = $('#insp-group'); if (g) g.classList.add('missing'); }
+}
+
 async function finishWork() {
   const d = getDev(view.id);
   const dr = drafts[view.id];
-  const blanks = countBlanks(d, dr.data);
   const over = splitNote(dr.data.note, d.info.noteCaps || DEFAULT_NOTE_CAPS).length - (d.info.noteCaps || DEFAULT_NOTE_CAPS).length;
   if (over > 0 && !confirm(`記事が記事欄に入りきりません（${over} 行はみ出し）。はみ出した分はExcelに書き込まれません。このまま完了にしますか？`)) return;
-  const unchecked = (d.info.checks || []).filter(c => !fieldOf(dr.data, c).ok).length;
-  if (unchecked && !confirm(`機器情報で「確認」を押していない項目が ${unchecked} 件あります。このまま完了にしますか？`)) return;
-  if (!dr.data.worker && !confirm('作業員が選ばれていません。このまま完了にしますか？')) return;
-  if (blanks && !confirm(`未入力の測定値が ${blanks} か所あります。このまま完了にしますか？`)) return;
-  if (!blanks && !confirm('完了にして送信します。よろしいですか？')) return;
+  const m = findMissing(d, dr.data);
+  if (m.msg.length) {
+    view.showMissing = true;
+    markMissing();
+    if (!confirm(`未記入の項目があります（赤枠の箇所）。\n${m.msg.join('\n')}\n\n未記入のまま完了にして送信しますか？`)) {
+      const first = document.querySelector('.missing');
+      if (first) first.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+  } else if (!confirm('完了にして送信します。よろしいですか？')) return;
   dr.finish = true;
   touchDraft(view.id);
-  await sync();
+  await withBusy('送信しています…', () => sync());
   alert(drafts[view.id] ? 'この端末に保存しました。電波が戻ると自動で送信されます。' : '送信しました。');
   leaveDetail();
   render();
@@ -1055,8 +1261,8 @@ document.addEventListener('click', async e => {
     cfg.name = ''; store.set('cfg', cfg); render();
   }
   else if (act === 'filter') { view.filter = b.dataset.f; store.set('filter', view.filter); render(); }
-  else if (act === 'refresh') refresh();
-  else if (act === 'open') { view.from = view.screen; view.screen = 'detail'; view.id = b.dataset.id; view.details = false; view.partsEdit = false; render(); window.scrollTo(0, 0); }
+  else if (act === 'refresh') withBusy('更新しています…', () => refresh());
+  else if (act === 'open') { view.from = view.screen; view.screen = 'detail'; view.id = b.dataset.id; view.details = false; view.partsEdit = false; view.showMissing = false; render(); window.scrollTo(0, 0); }
   else if (act === 'start') startWork(false);
   else if (act === 'reopen') { if (confirm('完了済みの機器を修正のため再開します。よろしいですか？')) startWork(true); }
   else if (act === 'release') releaseWork();
@@ -1065,6 +1271,8 @@ document.addEventListener('click', async e => {
   else if (act === 'insp') toggleInspector(b.dataset.name);
   else if (act === 'worker') setWorker(b.dataset.name);
   else if (act === 'details') { view.details = !view.details; renderDetail(); }
+  else if (act === 'jst') showJst();
+  else if (act === 'resetdata') resetData();
   else if (act === 'partsedit') {
     editDraft(data => {
       if (!data.partsEdited || !Array.isArray(data.parts)) {
@@ -1131,6 +1339,14 @@ function onEdit(e) {
   if (t.type === 'checkbox' || (clock && clock[2] === 'Dir')) renderDetail();
   else if (k.startsWith('ch.')) updateDevs(getDev(view.id), dr.data);
   else if (k === 'note') { const np = $('#noteprev'); if (np) np.innerHTML = notePreview(getDev(view.id), dr.data.note); }
+  else if (k.startsWith('pv.')) {
+    applyPv(getDev(view.id), dr.data);
+    const ta = document.querySelector('textarea[data-k=note]');
+    if (ta) ta.value = dr.data.note;
+    const np = $('#noteprev');
+    if (np) np.innerHTML = notePreview(getDev(view.id), dr.data.note);
+  }
+  if (view.showMissing) markMissing();
 }
 document.addEventListener('input', onEdit);
 document.addEventListener('compositionend', e => { if (e.target.id === 'q') onEdit(e); });
