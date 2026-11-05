@@ -147,6 +147,15 @@ table.pt input { width: 100%; text-align: right; padding: 8px 5px; }
 textarea.memo { display: block; width: 100%; min-height: 110px; }
 .memoinfo { display: flex; justify-content: space-between; font-size: 12px; color: var(--sub); margin-top: 4px; }
 .memoinfo .ng { color: var(--ng); font-weight: 700; }
+/* フラグ：一覧の枠の左横に付箋（枠の大きさは変えず、左の余白にはみ出させる） */
+.item { position: relative; }
+.item .flagtab { position: absolute; left: -12px; top: 7px; width: 14px; height: 26px; background: #f7c600; border-radius: 2px 0 0 2px; box-shadow: -1px 1px 2px rgba(0,0,0,.25); pointer-events: none; }
+.ttlrow { display: flex; align-items: flex-start; gap: 8px; }
+.ttlrow > div { flex: 1; min-width: 0; font-weight: 700; }
+.flagbtn { flex: none; font-size: 13px; padding: 4px 10px; border-radius: 8px; border: 1px solid var(--line); background: #fff; color: var(--sub); }
+.flagbtn.on { background: #fff3b0; border-color: #e0b400; color: #6b5300; font-weight: 700; }
+.flagbtn.on::before { content: ''; display: inline-block; width: 7px; height: 13px; background: #f7c600; margin-right: 5px; vertical-align: -2px; }
+.notepeek { display: block; width: 100%; text-align: left; background: #fffbe0; border: 1px solid #ecd56b; border-radius: 8px; padding: 6px 10px; margin-top: 8px; font-size: 13px; color: #5c4a00; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* 最後に入力した温度（流用） */
 .lasttemp { display: flex; align-items: center; gap: 8px; margin: -4px 0 10px; font-size: 12px; color: var(--sub); }
 .lasttemp span { flex: 1; min-width: 0; }
@@ -229,6 +238,8 @@ let fetchedAt = store.get('fetchedAt', '');
 let drafts = store.get('drafts', {});      // 機器id → { data, rev, pending, finish, blocked }
 let memos = store.get('memos', {});        // 工場名 → { text, at, by }（共有メモ。サーバーの別シートにあり、初期化しても消えない）
 let memoDrafts = store.get('memoDrafts', {});  // 工場名 → 保存前の入力（圏外や途中で閉じても消えないよう端末に残す）
+let notes = store.get('notes', {});          // 機器ID → { text, at, by, flag, flagAt, flagBy }（機器メモ・フラグ。Excelに書かず、初期化しても消えない）
+let noteDrafts = store.get('noteDrafts', {}); // 機器ID → 保存前の機器メモ
 // 画面の階層：plants（工場）→ locs（報告書＝Excelファイル）→ list（機器）→ detail（入力）。選んだ工場・報告書は次回も開く
 const nav = store.get('nav', {});
 let view = { screen: nav.plant ? (nav.loc ? 'list' : 'locs') : 'plants', plant: nav.plant || null, loc: nav.loc || null, from: null, id: null, filter: store.get('filter', 'all'), q: '' };
@@ -346,6 +357,7 @@ async function refresh(quiet) {
     devices = j.devices;
     fetchedAt = j.now;
     if (j.memos) { memos = j.memos; store.set('memos', memos); }
+    if (j.notes) { notes = j.notes; store.set('notes', notes); }
     store.set('devices', devices);
     store.set('fetchedAt', fetchedAt);
     if (j.names && j.names.length) {
@@ -1036,7 +1048,7 @@ function itemButton(d) {
   const s = localStatus(d);
   const mine = d.status === ST.WORK && d.worker === cfg.name;
   return `<button class="item ${mine ? 'mine' : ''}" data-act="open" data-id="${h(d.id)}">
-    <div class="main"><div class="tag">${h(d.tag)}</div><div class="sub">${h(d.title)}${d.kind !== KIND.TOUCH && d.info && d.info.loc ? '（' + h(d.info.loc) + '）' : ''}</div></div>
+    ${(notes[d.id] || {}).flag ? '<i class="flagtab"></i>' : ''}<div class="main"><div class="tag">${h(d.tag)}</div><div class="sub">${h(d.title)}${d.kind !== KIND.TOUCH && d.info && d.info.loc ? '（' + h(d.info.loc) + '）' : ''}</div></div>
     <span class="badge st-${s.cls}">${h(s.text)}</span></button>`;
 }
 
@@ -1195,14 +1207,79 @@ function infoCard(d) {
   const row = (k, v) => v ? `<dt>${k}</dt><dd>${v}</dd>` : '';
   const prev = `${h(i.prev.date || '')}　${h((i.prev.inspectors || []).filter(Boolean).join('・'))}`;
   if (d.kind === KIND.TOUCH) {
-    return `<section class="card"><div style="font-weight:700">${h(d.tag)}</div><dl class="info">
+    return `<section class="card"><div class="ttlrow"><div>${h(d.tag)}</div>${flagButton(d)}</div>${notePeek(d)}<dl class="info">
       ${row('No.', h(i.no) + '（' + h(d.sheet) + '）')}${row('設置場所', h(i.loc))}${row('台数', i.panels.length + ' 台')}${row('前回', prev)}</dl>${detailsBlock(i)}</section>`;
   }
-  return `<section class="card"><div style="font-weight:700">${h(i.name || d.title)}</div><dl class="info">
+  return `<section class="card"><div class="ttlrow"><div>${h(i.name || d.title)}</div>${flagButton(d)}</div>${notePeek(d)}<dl class="info">
     ${row('No.', h(i.no) + '（' + h(d.sheet) + '）' + (i.kanri ? '　管理番号 ' + h(i.kanri) : ''))}
     ${row('場所', h(i.loc))}${row('型番', h(i.model))}${row('製造番号', h(i.serial))}
     ${row('範囲', (i.ranges || []).map(h).join('<br>'))}
     ${row('精度', accuracyText(i))}${row('前回', prev)}</dl>${detailsBlock(i)}</section>`;
+}
+
+// ---- 機器メモ・フラグ（全員で共有。Excelには書かない。データ初期化しても消えない）----
+function flagButton(d) {
+  const on = !!(notes[d.id] || {}).flag;
+  return `<button type="button" class="flagbtn ${on ? 'on' : ''}" data-act="flag">${on ? 'フラグ中' : 'フラグ'}</button>`;
+}
+
+// メモがあれば機器画面の上に1行だけ出す（押すと下のメモ欄へ移動）
+function notePeek(d) {
+  const t = ((notes[d.id] || {}).text || '').trim();
+  return t ? `<button type="button" class="notepeek" data-act="gonote">メモ：${h(t.split('\n')[0])}</button>` : '';
+}
+
+function devMemoSection(d) {
+  const n = notes[d.id] || { text: '', at: '', by: '' };
+  const draft = noteDrafts[d.id];
+  const unsaved = draft != null && draft !== (n.text || '');
+  return `<section class="card" id="devmemo-card"><h3 style="margin-top:0">機器メモ <small>Excelには反映されません・データ初期化しても消えません</small></h3>
+    <textarea id="devmemo" class="memo" style="min-height:80px" placeholder="この機器についての連絡事項など（全員で共有）">${h(draft != null ? draft : (n.text || ''))}</textarea>
+    <div class="memoinfo"><span>${n.at ? `最終更新 ${h(hm(n.at))}${n.by ? ' ' + h(n.by) : ''}` : 'まだ書かれていません'}</span>
+      <span id="devmemo-state" class="${unsaved ? 'ng' : ''}">${unsaved ? '未保存' : ''}</span></div>
+    <button class="btn small primary" data-act="savedevmemo">メモを保存</button></section>`;
+}
+
+async function saveDevMemo(force) {
+  const d = getDev(view.id);
+  if (!d) return;
+  const el = $('#devmemo');
+  const text = el ? el.value : (noteDrafts[d.id] || '');
+  const base = (notes[d.id] || {}).at || '';
+  try {
+    const j = await withBusy('メモを保存しています…', () => api('saveDevMemo', { id: d.id, tag: d.tag, plant: d.plant, text, baseAt: base, force: !!force }));
+    notes[d.id] = j.note;
+    store.set('notes', notes);
+    delete noteDrafts[d.id];
+    store.set('noteDrafts', noteDrafts);
+    renderDetail();
+  } catch (e) {
+    if (e.code === 'memoconflict') {
+      const c = await choose(`${e.message}。どうしますか？`, [
+        { key: 'over', label: '自分の内容で上書きする', cls: 'warn' },
+        { key: 'load', label: '最新の内容を表示する（自分の入力は消えます）' },
+        { key: 'cancel', label: 'キャンセル（入力はそのまま）' },
+      ]);
+      if (c === 'over') return saveDevMemo(true);
+      if (c === 'load') { delete noteDrafts[d.id]; store.set('noteDrafts', noteDrafts); await withBusy('読み込み中…', () => refresh(true)); renderDetail(); }
+      return;
+    }
+    alert(e.code === 'offline' ? 'メモの保存には電波が必要です。入力した内容はこの端末に残っています。' : e.message);
+  }
+}
+
+async function toggleFlag() {
+  const d = getDev(view.id);
+  if (!d) return;
+  const flag = !(notes[d.id] || {}).flag;
+  try {
+    const j = await withBusy(flag ? 'フラグを付けています…' : 'フラグを外しています…', () => api('setFlag', { id: d.id, tag: d.tag, plant: d.plant, flag }));
+    notes[d.id] = j.note;
+    store.set('notes', notes);
+    renderDetail();
+  } catch (e) {
+    alert(e.code === 'offline' ? 'フラグの変更には電波が必要です。' : e.message);
+  }
 }
 
 // 精度：報告書の書き方どおり（例：±1 ﾃﾞｼﾞｯﾄ　±0.5 ％ F.S）。登録データが古い場合は %F.S だけ
@@ -1263,6 +1340,7 @@ function renderDetail() {
 
   $('#app').innerHTML = `${infoCard(d)}${head}
     ${data ? `<section class="card">${form(d, data, editable)}</section>` : ''}
+    ${devMemoSection(d)}
     <div class="actions"><div class="inner">${actions}</div></div>`;
   if (data) updateDevs(d, data);
   markMissing();
@@ -1711,6 +1789,9 @@ document.addEventListener('click', async e => {
   }
   else if (act === 'testsedit') { view.testsEdit = !view.testsEdit; renderDetail(); }
   else if (act === 'savememo') saveMemo(false);
+  else if (act === 'savedevmemo') saveDevMemo(false);
+  else if (act === 'flag') toggleFlag();
+  else if (act === 'gonote') { const c = $('#devmemo-card'); if (c) c.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
   else if (act === 'usetemp') { const t = store.get('lastTemp', null); if (t) editDraft(data => { data.temp = t.v; }); }
 });
 
@@ -1728,6 +1809,13 @@ function onEdit(e) {
     store.set('memoDrafts', memoDrafts);
     const st = $('#memo-state');
     if (st) { const un = t.value !== ((memos[view.plant] || {}).text || ''); st.textContent = un ? '未保存' : ''; st.className = un ? 'ng' : ''; }
+    return;
+  }
+  if (t.id === 'devmemo') {
+    noteDrafts[view.id] = t.value;
+    store.set('noteDrafts', noteDrafts);
+    const st = $('#devmemo-state');
+    if (st) { const un = t.value !== ((notes[view.id] || {}).text || ''); st.textContent = un ? '未保存' : ''; st.className = un ? 'ng' : ''; }
     return;
   }
   const k = t.dataset.k;
