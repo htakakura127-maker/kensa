@@ -434,7 +434,7 @@ const MAX_STAMPS = 5;
 // タッチパネルの時計が合っていたときの表記（選択肢と報告書の検査結果）
 const CLOCK_OK = 'ズレなし';
 // 記事1行に入る文字数（半角=1、全角=2）。新しい登録データには機器ごとに入っている
-const DEFAULT_NOTE_CAPS = Array(10).fill(60);
+const DEFAULT_NOTE_CAPS = Array(10).fill(62);
 const isHalf = c => (c >= 0x20 && c <= 0x7E) || (c >= 0xFF61 && c <= 0xFF9F);
 
 // 記事を Excel の記事欄1行に収まる長さで折り返す（pc/common.ps1 の Split-NoteLines と同じ計算）
@@ -1336,6 +1336,13 @@ function findMissing(d, data) {
   if (temp) keys.push('temp');
   const clock = isRecorder(d) && !data.clock.done;
   if (clock) keys.push('clock.done');
+  // 時計のずれの量：記録計で「有」、タッチパネルで「遅れ／進み」を選んだのに空欄（報告書が「○分」になってしまう）
+  const clockAmt = [];
+  if (isRecorder(d) && data.clock.done === '有' && !String(data.clock.amount || '').trim()) clockAmt.push('clock.amount');
+  (data.panels || []).forEach((p, b) => {
+    if (p.clockDir && p.clockDir !== CLOCK_OK && !String(p.clockMin || '').trim()) clockAmt.push(`panels.${b}.clockMin`);
+  });
+  keys.push(...clockAmt);
   // PV（計器）：「不要」にしていない空欄
   const pv = d.kind === KIND.KEIKI ? pvItems(d).filter(it => !data.pv.na[it.path] && !pvInput(data, it)).map(it => it.path) : [];
   keys.push(...pv);
@@ -1345,6 +1352,7 @@ function findMissing(d, data) {
   if (meas) msg.push(`・測定値 ${meas} か所`);
   if (temp) msg.push('・温度');
   if (clock) msg.push('・時刻合わせの有無');
+  if (clockAmt.length) msg.push(`・時計のずれの量 ${clockAmt.length} か所`);
   if (pv.length) msg.push(`・PV ${pv.length} か所（機器に無い項目は「不要」）`);
   if (checks.length) msg.push(`・機器情報の「確認」 ${checks.length} 件`);
   if (!data.worker) msg.push('・作業員');
