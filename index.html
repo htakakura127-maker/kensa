@@ -75,9 +75,15 @@ textarea { min-height: 120px; resize: vertical; }
 .jst-date { text-align: center; color: var(--sub); }
 .jst-note { font-size: 12px; color: var(--sub); text-align: center; margin-top: 6px; }
 /* PV（記事に反映）：2列。ラベルが長くても欄の高さがそろうよう、ラベルは1行に収める */
-.pv label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pvcell { min-width: 0; font-size: 13px; color: var(--sub); margin-bottom: 10px; }
+.pvcell input { display: block; width: 100%; margin-top: 4px; }
+.pvhead { display: flex; align-items: center; gap: 4px; }
+.pvhead span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pvna { flex: none; padding: 2px 8px; border: 1px solid var(--line); border-radius: 99px; background: #fff; font-size: 12px; font-weight: 700; color: var(--sub); }
+.pvna.on { background: var(--todo); border-color: var(--todo); color: #fff; }
 /* 製造番号の読み方の例 */
-.chint { font-size: 11px; color: var(--sub); padding: 0 0 6px 70px; margin-top: -4px; border-bottom: 1px solid var(--line); }
+.chint { font-size: 11px; color: var(--sub); padding: 0 0 6px 70px; margin-top: -2px; border-bottom: 1px solid var(--line); }
+.crow.has-hint { border-bottom: 0; }  /* 製造番号と読み方の間には線を引かない */
 /* 修正手順（画像） */
 .modal.manual { align-items: stretch; }
 .modal.manual .box { max-height: 100%; overflow-y: auto; -webkit-overflow-scrolling: touch; }
@@ -395,6 +401,7 @@ function normalize(d, data) {
   out.pv = Object.assign({ filter: '', bias: '' }, out.pv);
   out.pv.v = Array.isArray(out.pv.v) ? out.pv.v : [];
   out.pv.b = Array.isArray(out.pv.b) ? out.pv.b : [];
+  out.pv.na = out.pv.na || {};
   out.clock = Object.assign({ done: '', dir: '遅れ', amount: '', unit: '分' }, out.clock);
   out.ch = (d.info.chs || []).map((_, k) => Object.assign(emptyCh(), ((data && data.ch) || [])[k] || {}));
   if (d.kind === KIND.TOUCH) {
@@ -443,22 +450,33 @@ const checkName = (d, c) => (c.panel != null && d.info.panels && d.info.panels[c
 const fieldOf = (data, c) => data.fields[c.key] || {};
 const isChanged = (data, c) => { const f = fieldOf(data, c); return f.value != null && f.value !== c.value; };
 
-// 型番が C で始まり製造番号が9桁の数字（アズビルの調節計など）のとき、製造番号の読み方を添える
-const SERIAL_HINT = '例1724→17_24/4→17年6月(17年24週)';
+// 型番が C で始まり製造番号が9桁の数字（アズビルの調節計など）のとき、製造番号の左4桁（年2桁＋週2桁）から製造時期を出す
+//   例：1724 → 17_24/4 → 17年6月（17年24週）。月は 週÷4 を切り上げ（最大12月）
+function serialDate(model, serial) {
+  if (!/^[CＣ]/i.test(String(model).trim())) return '';
+  const s = String(serial).trim();
+  if (!/^\d{9}$/.test(s)) return '';
+  const yy = s.slice(0, 2), ww = s.slice(2, 4);
+  if (+ww < 1 || +ww > 53) return '';
+  const month = Math.min(12, Math.ceil(+ww / 4));
+  return `${s.slice(0, 4)}→${yy}_${ww}/4→${yy}年${month}月(${yy}年${+ww}週)`;
+}
+
 function checkRows(data, list, editable) {
   const dis = editable ? '' : 'disabled';
   const cur = c => (isChanged(data, c) ? fieldOf(data, c).value : c.value) || '';
   const model = list.find(x => x.key === 'model');
-  const serialHint = c => c.key === 'serial' && model && /^[CＣ]/i.test(cur(model).trim()) && /^\d{9}$/.test(cur(c).trim());
+  const hintOf = c => (c.key === 'serial' && model ? serialDate(cur(model), cur(c)) : '');
   return list.map(c => {
     const f = fieldOf(data, c);
     const changed = isChanged(data, c);
-    return `<div class="crow ${changed ? 'changed' : ''}">
+    const hint = hintOf(c);
+    return `<div class="crow ${changed ? 'changed' : ''} ${hint ? 'has-hint' : ''}">
       <div class="cl">${h(c.label)}</div>
       <div class="cv">${h((changed ? f.value : c.value) || '（空欄）')}${changed ? `<div class="orig">元：${h(c.value || '（空欄）')}</div>` : ''}</div>
       <button type="button" class="okbtn ${f.ok ? 'on' : ''}" data-act="fieldok" data-key="${h(c.key)}" ${dis}>${f.ok ? '✓ 確認' : '確認'}</button>
       <button type="button" class="edbtn" data-act="fieldedit" data-key="${h(c.key)}" ${editable && !f.ok ? '' : 'disabled'}>変更</button>
-    </div>${serialHint(c) ? `<div class="chint">${h(SERIAL_HINT)}</div>` : ''}`;
+    </div>${hint ? `<div class="chint">${h(hint)}</div>` : ''}`;
   }).join('');
 }
 
@@ -543,11 +561,26 @@ function pvFields(d, data, editable) {
   const cells = pvItems(d).map(it => {
     const f = findPvToken(prevLines, it, n);
     const prev = f ? pvTokenValue(f.token) : '';
-    return `<label>${h(it.label)}${it.unit ? ` (${h(it.unit)})` : ''}<input class="num" inputmode="decimal" data-k="${it.path}" value="${h(pvInput(data, it))}" placeholder="${h(prev.replace(/[^\d.+\-]/g, ''))}" ${dis}>
-      <div class="hint"><span class="prev">${prev ? '前回 ' + h(prev) : ''}</span></div></label>`;
+    const na = !!data.pv.na[it.path];
+    // 「不要」：その機器に無い項目。押すと入力できなくなり、記事にも書かない（記事にあれば消す）
+    return `<div class="pvcell"><div class="pvhead"><span>${h(it.label)}${it.unit ? ` (${h(it.unit)})` : ''}</span>
+        <button type="button" class="pvna ${na ? 'on' : ''}" data-act="pvna" data-path="${it.path}" ${dis}>${na ? '✓ 不要' : '不要'}</button></div>
+      <input class="num" inputmode="decimal" data-k="${it.path}" value="${na ? '' : h(pvInput(data, it))}" placeholder="${na ? '不要' : h(prev.replace(/[^\d.+\-]/g, ''))}" ${na ? 'disabled' : dis}>
+      <div class="hint"><span class="prev">${prev ? '前回 ' + h(prev) : ''}</span></div></div>`;
   });
   if (n > 1) cells.splice(1, 0, '<div></div>');  // 2CH以上は「PVバイアス CHn」「検査時PV CHn」を1行に並べる
-  return `<div class="grid2 pv">${cells.join('')}</div><p class="muted" style="margin:-4px 0 8px">PV の値は入力すると記事に反映されます。</p>`;
+  return `<div class="grid2 pv">${cells.join('')}</div><p class="muted" style="margin:-4px 0 8px">PV の値は入力すると記事に反映されます。機器に無い項目は「不要」を押してください。</p>`;
+}
+
+// 「不要」にした項目を記事から消す（「CH1：…　PVﾊﾞｲｱｽ：0.0」なら PVﾊﾞｲｱｽ の部分だけ。行が空になれば行ごと）
+function removePvToken(d, data, path) {
+  const it = pvItems(d).find(x => x.path === path);
+  const lines = String(data.note || '') ? String(data.note).split('\n') : [];
+  const f = it && findPvToken(lines, it, nChOf(d));
+  if (!f) return;
+  const rest = lines[f.i].replace(f.token, '').replace(/[\s　]{2,}/g, '　').replace(/^[\s　]+|[\s　]+$/g, '');
+  if (rest) lines[f.i] = rest; else lines.splice(f.i, 1);
+  data.note = lines.join('\n');
 }
 
 function applyPv(d, data) {
@@ -556,7 +589,7 @@ function applyPv(d, data) {
   const add = [];
   pvItems(d).forEach(it => {
     const v = pvInput(data, it);
-    if (!v) return;
+    if (!v || data.pv.na[it.path]) return;
     const f = findPvToken(lines, it, n);
     if (f) {
       const label = f.token.slice(0, f.token.indexOf('：'));
@@ -610,15 +643,27 @@ function clockSection(d, data, editable) {
     <button type="button" class="btn small" data-act="jst">日本標準時間</button>`;
 }
 
-// ---- 修正手順（記録計・タッチパネル）。web/manual/ に置いた画像を表示する ----
+// ---- 修正手順（記録計・タッチパネル）・確認手順（調節計）。web/manual/ に置いた画像を表示する ----
 //   タッチパネルは機種のシリーズごとに手順が違うため、シートの各台の型番からシリーズを判定し、シリーズごとに画像を出す
 //   画像の名前：<シリーズ>-<手順>.png（2枚目以降は -2.png、-3.png …）。例：gp4000-clock.png
-const MANUAL_PROCS = { brightness: '輝度調整', clock: '時刻合わせ' };
+const MANUAL_PROCS = { brightness: '輝度調整', clock: '時刻合わせ', check: '確認手順' };
 const MANUAL_SERIES = [
   { re: /^(PFX)?GP4\d{3}/i, key: 'gp4000', name: 'GP4000シリーズ' },
   { re: /^GP[45]77R/i, key: 'gp477r', name: 'GP477R・GP577R' },
   { re: /^GT2\d{3}/i, key: 'gt2000', name: 'GOT2000シリーズ' },
+  // 記録計（時刻合わせのみ）
+  { re: /^DPR5\d{2}/i, key: 'dpr500', name: 'DPR500シリーズ' },
+  { re: /^SRF20[123]A/i, key: 'srf201a', name: 'SRF201A・SRF202A・SRF203A' },
+  { re: /^SRF2(06|12|24)AS/i, key: 'srf206as', name: 'SRF206AS・SRF212AS・SRF224AS' },
+  // 調節計（確認手順。シリーズ別の画像が無ければ共通の controller-check を出す）
+  { re: /^C40/i, key: 'sdc40', name: 'SDC40シリーズ（C40…）' },
+  { re: /^C36/i, key: 'sdc36', name: 'SDC36（C36…）' },
+  { re: /^C46/i, key: 'sdc46', name: 'SDC46シリーズ（C46…）' },
 ];
+// 確認手順を出す調節計：型番が C で始まり、製造番号が9桁の数字で、名称に「調節計」とあるもの
+const isController = d => d.kind === KIND.KEIKI && /^[CＣ]/i.test(String(d.info.model || '').trim()) &&
+  /^\d{9}$/.test(String(d.info.serial || '').trim()) && /調節計/.test(d.info.name || '');
+const seriesOf = model => MANUAL_SERIES.find(x => x.re.test(String(model || '').trim()));
 const loadImg = src => new Promise(ok => { const img = new Image(); img.onload = () => ok(img); img.onerror = () => ok(null); img.src = src; });
 async function loadManualImages(base) {
   const list = [];
@@ -633,7 +678,7 @@ async function loadManualImages(base) {
 }
 
 async function showManual(d) {
-  let proc = 'clock';
+  let proc = isController(d) ? 'check' : 'clock';
   if (d.kind === KIND.TOUCH) {
     proc = await choose('修正手順を選んでください。', [
       { key: 'brightness', label: '輝度調整' },
@@ -642,40 +687,40 @@ async function showManual(d) {
     ]);
     if (!MANUAL_PROCS[proc]) return;
   }
-  // 表示する組：タッチパネルはシリーズごと（どの台が該当するかも書く）、記録計は1組
+  // 表示する組：機種のシリーズごと（どの台が該当するかも書く）。型番は現場で変更していれば変更後で判定する
+  const dr = drafts[d.id];
+  const data = dr ? dr.data : normalize(d, d.data);
+  const units = d.kind === KIND.TOUCH
+    ? (d.info.panels || []).map((p, b) => ({ name: p.name, key: `p${b}.model`, model: p.model }))
+    : [{ name: d.tag, key: 'model', model: d.info.model }];
   const groups = [];
-  if (d.kind === KIND.TOUCH) {
-    const dr = drafts[d.id];
-    const data = dr ? dr.data : normalize(d, d.data);
-    const other = [];
-    (d.info.panels || []).forEach((p, b) => {
-      const c = (d.info.checks || []).find(x => x.key === `p${b}.model`);
-      const model = c && isChanged(data, c) ? fieldOf(data, c).value : p.model;
-      const s = MANUAL_SERIES.find(x => x.re.test(String(model || '').trim()));
-      if (!s) { other.push(`${p.name}（${model || '型番なし'}）`); return; }
-      let g = groups.find(x => x.key === s.key);
-      if (!g) groups.push(g = { key: s.key, title: s.name, base: `${s.key}-${proc}`, panels: [] });
-      g.panels.push(`${p.name}（${model}）`);
-    });
-    if (other.length) groups.push({ title: '手順の無い機種', panels: other });
-  } else {
-    groups.push({ title: '', base: `recorder-${proc}`, panels: [] });
-  }
+  const other = [];
+  units.forEach(u => {
+    const c = (d.info.checks || []).find(x => x.key === u.key);
+    const model = c && isChanged(data, c) ? fieldOf(data, c).value : u.model;
+    const s = seriesOf(model);
+    if (!s) { other.push(`${u.name}（${model || '型番なし'}）`); return; }
+    let g = groups.find(x => x.key === s.key);
+    if (!g) groups.push(g = { key: s.key, title: s.name, bases: [`${s.key}-${proc}`].concat(proc === 'check' ? ['controller-check'] : []), panels: [] });
+    g.panels.push(`${u.name}（${model}）`);
+  });
+  if (other.length) groups.push({ title: '手順の無い機種', panels: other });
   const el = document.createElement('div');
   el.className = 'modal manual';
-  el.innerHTML = `<div class="box"><div class="msg" style="font-weight:700">修正手順：${h(MANUAL_PROCS[proc])}${d.kind === KIND.TOUCH ? '' : '（記録計）'}</div>
+  el.innerHTML = `<div class="box"><div class="msg" style="font-weight:700">${proc === 'check' ? '確認手順（調節計）' : '修正手順：' + h(MANUAL_PROCS[proc]) + (d.kind === KIND.TOUCH ? '' : '（記録計）')}</div>
     ${groups.map((g, i) => `<div class="man-group">${g.title ? `<div class="man-title">${h(g.title)}</div>` : ''}
       ${g.panels.length ? `<div class="muted">${g.panels.map(h).join('<br>')}</div>` : ''}
-      <div data-man-imgs="${i}">${g.base ? '<p class="muted">読み込み中…</p>' : ''}</div></div>`).join('')}
+      <div data-man-imgs="${i}">${g.bases ? '<p class="muted">読み込み中…</p>' : ''}</div></div>`).join('')}
     <button class="btn" data-man="close">閉じる</button></div>`;
   el.addEventListener('click', e => { if (e.target === el || e.target.closest('[data-man=close]')) el.remove(); });
   document.body.appendChild(el);
   for (let i = 0; i < groups.length; i++) {
-    if (!groups[i].base) continue;
-    const imgs = await loadManualImages(groups[i].base);
+    if (!groups[i].bases) continue;
+    let imgs = [];
+    for (const base of groups[i].bases) { imgs = await loadManualImages(base); if (imgs.length) break; }
     if (!el.isConnected) return;
     const box = el.querySelector(`[data-man-imgs="${i}"]`);
-    box.innerHTML = imgs.length ? '' : `<p class="muted">この手順の画像はまだ登録されていません（web/manual/${h(groups[i].base)}.png）。</p>`;
+    box.innerHTML = imgs.length ? '' : `<p class="muted">この手順の画像はまだ登録されていません（web/manual/${h(groups[i].bases[0])}.png）。</p>`;
     imgs.forEach(img => box.appendChild(img));
   }
 }
@@ -1002,7 +1047,8 @@ function detailsBlock(i) {
   const list = i.details || [];
   // 記録計・タッチパネルは「修正手順」（画像）も見られるようにする
   const d = getDev(view.id);
-  const manual = d && (d.kind === KIND.TOUCH || isRecorder(d)) ? '<button type="button" class="btn small" data-act="manual">修正手順</button>' : '';
+  const manual = d && (d.kind === KIND.TOUCH || isRecorder(d)) ? '<button type="button" class="btn small" data-act="manual">修正手順</button>'
+    : d && isController(d) ? '<button type="button" class="btn small" data-act="manual">確認手順</button>' : '';
   if (!list.length) return manual;
   return `${manual}<button type="button" class="btn small" data-act="details">${view.details ? '詳細を閉じる ▲' : '詳細を表示 ▼'}</button>
     ${view.details ? `<div class="details">${list.map(x => `<div class="ditem"><div class="dl">${h(x.label)}</div><div class="dv">${h(x.value).replace(/\n/g, '<br>')}</div></div>`).join('')}</div>` : ''}`;
@@ -1255,12 +1301,16 @@ function findMissing(d, data) {
   if (temp) keys.push('temp');
   const clock = isRecorder(d) && !data.clock.done;
   if (clock) keys.push('clock.done');
+  // PV（計器）：「不要」にしていない空欄
+  const pv = d.kind === KIND.KEIKI ? pvItems(d).filter(it => !data.pv.na[it.path] && !pvInput(data, it)).map(it => it.path) : [];
+  keys.push(...pv);
   const checks = (d.info.checks || []).filter(c => !fieldOf(data, c).ok).map(c => c.key);
   const msg = [];
   const meas = keys.filter(k => k.startsWith('ch.')).length;  // 温度・時刻合わせは個別に数える
   if (meas) msg.push(`・測定値 ${meas} か所`);
   if (temp) msg.push('・温度');
   if (clock) msg.push('・時刻合わせの有無');
+  if (pv.length) msg.push(`・PV ${pv.length} か所（機器に無い項目は「不要」）`);
   if (checks.length) msg.push(`・機器情報の「確認」 ${checks.length} 件`);
   if (!data.worker) msg.push('・作業員');
   if (!data.inspectors.length) msg.push('・検査員（1名以上）');
@@ -1421,6 +1471,16 @@ document.addEventListener('click', async e => {
   else if (act === 'worker') setWorker(b.dataset.name);
   else if (act === 'details') { view.details = !view.details; renderDetail(); }
   else if (act === 'jst') showJst();
+  else if (act === 'pvna') {
+    const path = b.dataset.path;
+    editDraft(data => {
+      if (data.pv.na[path]) { delete data.pv.na[path]; return; }
+      data.pv.na[path] = true;
+      const ks = path.split('.');
+      if (ks.length === 3) data.pv[ks[1]][ks[2]] = ''; else data.pv[ks[1]] = '';
+      removePvToken(getDev(view.id), data, path);
+    });
+  }
   else if (act === 'manual') { const d = getDev(view.id); if (d) showManual(d); }
   else if (act === 'resetdata') resetData();
   else if (act === 'partsedit') {

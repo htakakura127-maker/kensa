@@ -1,13 +1,15 @@
-修正手順の画像の置き場所（アプリの「修正手順」ボタンで表示されます）
+﻿修正手順の画像の置き場所（アプリの「修正手順」ボタンで表示されます）
 
 元の画像は 点検内容\修正手順 にあり、ここには英数字の名前でコピーしています。
-タッチパネルは、各台の型番から機種のシリーズを判定して、シリーズごとの画像を出します。
+タッチパネルと記録計は、各台の型番から機種のシリーズを判定して、シリーズごとの画像を出します。
 
   シリーズ（判定する型番）               輝度調整                時刻合わせ
   GP4000（PFXGP4…／GP4…）               gp4000-brightness.png   gp4000-clock.png
   GP477R・GP577R（GP477R…／GP577R…）     gp477r-brightness.png   gp477r-clock.png
   GOT2000（GT2…）                        gt2000-brightness.png   gt2000-clock.png
-  記録計                                  ―                      recorder-clock.png（未作成）
+  記録計 DPR500（DPR5…）                 ―                      dpr500-clock.png
+  記録計 SRF201A・202A・203A（SRF20[123]A…） ―                 srf201a-clock.png
+  記録計 SRF206AS・212AS・224AS           ―                      srf206as-clock.png
 
 1つの手順が複数枚になる場合は、2枚目以降を -2.png、-3.png … とする（例：gp4000-clock-2.png）。
 JPEG（.jpg）でもよい。新しいシリーズを足すときは index.html の MANUAL_SERIES に1行追加する。
