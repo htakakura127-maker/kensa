@@ -646,7 +646,7 @@ function clockSection(d, data, editable) {
 // ---- 修正手順（記録計・タッチパネル）・確認手順（調節計）。web/manual/ に置いた画像を表示する ----
 //   タッチパネルは機種のシリーズごとに手順が違うため、シートの各台の型番からシリーズを判定し、シリーズごとに画像を出す
 //   画像の名前：<シリーズ>-<手順>.png（2枚目以降は -2.png、-3.png …）。例：gp4000-clock.png
-const MANUAL_PROCS = { brightness: '輝度調整', clock: '時刻合わせ', check: '確認手順' };
+const MANUAL_PROCS = { brightness: '輝度調整', clock: '時刻合わせ', bias: 'PVフィルタ・バイアス' };
 const MANUAL_SERIES = [
   { re: /^(PFX)?GP4\d{3}/i, key: 'gp4000', name: 'GP4000シリーズ' },
   { re: /^GP[45]77R/i, key: 'gp477r', name: 'GP477R・GP577R' },
@@ -655,10 +655,10 @@ const MANUAL_SERIES = [
   { re: /^DPR5\d{2}/i, key: 'dpr500', name: 'DPR500シリーズ' },
   { re: /^SRF20[123]A/i, key: 'srf201a', name: 'SRF201A・SRF202A・SRF203A' },
   { re: /^SRF2(06|12|24)AS/i, key: 'srf206as', name: 'SRF206AS・SRF212AS・SRF224AS' },
-  // 調節計（確認手順。シリーズ別の画像が無ければ共通の controller-check を出す）
-  { re: /^C40/i, key: 'sdc40', name: 'SDC40シリーズ（C40…）' },
-  { re: /^C36/i, key: 'sdc36', name: 'SDC36（C36…）' },
-  { re: /^C46/i, key: 'sdc46', name: 'SDC46シリーズ（C46…）' },
+  // 調節計・指示計（確認手順：PVフィルタ・バイアス）
+  { re: /^C40/i, key: 'c40', name: 'C40' },
+  { re: /^C3\d/i, key: 'c30', name: 'C30系（C36 など）' },
+  { re: /^C4[5-7]/i, key: 'c47', name: 'C47系（C46 など）' },
 ];
 // 確認手順を出す調節計・指示計：型番が C で始まり、製造番号が9桁の数字で、名称に「調節計」か「指示計」とあるもの
 const isController = d => d.kind === KIND.KEIKI && /^[CＣ]/i.test(String(d.info.model || '').trim()) &&
@@ -678,7 +678,14 @@ async function loadManualImages(base) {
 }
 
 async function showManual(d) {
-  let proc = isController(d) ? 'check' : 'clock';
+  let proc = 'clock';
+  if (isController(d)) {
+    proc = await choose('確認手順を選んでください。', [
+      { key: 'bias', label: 'PVフィルタ・バイアス' },
+      { key: 'cancel', label: 'キャンセル' },
+    ]);
+    if (!MANUAL_PROCS[proc]) return;
+  }
   if (d.kind === KIND.TOUCH) {
     proc = await choose('修正手順を選んでください。', [
       { key: 'brightness', label: '輝度調整' },
@@ -701,13 +708,13 @@ async function showManual(d) {
     const s = seriesOf(model);
     if (!s) { other.push(`${u.name}（${model || '型番なし'}）`); return; }
     let g = groups.find(x => x.key === s.key);
-    if (!g) groups.push(g = { key: s.key, title: s.name, bases: [`${s.key}-${proc}`].concat(proc === 'check' ? ['controller-check'] : []), panels: [] });
+    if (!g) groups.push(g = { key: s.key, title: s.name, bases: [`${s.key}-${proc}`], panels: [] });
     g.panels.push(`${u.name}（${model}）`);
   });
   if (other.length) groups.push({ title: '手順の無い機種', panels: other });
   const el = document.createElement('div');
   el.className = 'modal manual';
-  el.innerHTML = `<div class="box"><div class="msg" style="font-weight:700">${proc === 'check' ? '確認手順（' + (/指示計/.test(d.info.name || '') ? '指示計' : '調節計') + '）' : '修正手順：' + h(MANUAL_PROCS[proc]) + (d.kind === KIND.TOUCH ? '' : '（記録計）')}</div>
+  el.innerHTML = `<div class="box"><div class="msg" style="font-weight:700">${proc === 'bias' ? '確認手順：PVフィルタ・バイアス（' + (/指示計/.test(d.info.name || '') && !/調節計/.test(d.info.name || '') ? '指示計' : '調節計') + '）' : '修正手順：' + h(MANUAL_PROCS[proc]) + (d.kind === KIND.TOUCH ? '' : '（記録計）')}</div>
     ${groups.map((g, i) => `<div class="man-group">${g.title ? `<div class="man-title">${h(g.title)}</div>` : ''}
       ${g.panels.length ? `<div class="muted">${g.panels.map(h).join('<br>')}</div>` : ''}
       <div data-man-imgs="${i}">${g.bases ? '<p class="muted">読み込み中…</p>' : ''}</div></div>`).join('')}
@@ -849,9 +856,13 @@ function localStatus(d) {
   return { cls: 'todo', text: '未着手' };
 }
 
-// 「動作確認待ち」は調節計（計器で名称に「調節計」とあるもの）だけ。それ以外は「一時保存(名前)」
-const waitingCheck = d => d.kind === KIND.KEIKI && /調節計/.test((d.info && d.info.name) || '') && !!d.data &&
-  (Object.values(d.data.fields || {}).some(f => f && f.ok) || Object.keys(d.data.replaced || {}).length > 0);
+// 「動作確認待ち」：フィルター類の部品を「交換済み」にしてから中断した機器（交換後の動作確認が残っている）。それ以外は「一時保存(名前)」
+function waitingCheck(d) {
+  const data = d.data;
+  if (!data || !data.replaced) return false;
+  const parts = data.partsEdited && Array.isArray(data.parts) ? data.parts : ((d.info.prev || {}).parts || []);
+  return Object.keys(data.replaced).some(n => data.replaced[n] && parts[n] && isFilterPart(parts[n].name));
+}
 
 
 // ---- 画面 ----

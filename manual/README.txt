@@ -11,6 +11,11 @@
   記録計 SRF201A・202A・203A（SRF20[123]A…） ―                 srf201a-clock.png
   記録計 SRF206AS・212AS・224AS           ―                      srf206as-clock.png
 
+  調節計・指示計の確認手順「PVフィルタ・バイアス」（型番C…・製造番号9桁・名称に「調節計」か「指示計」）
+    C40（C40…）        c40-bias.png
+    C30系（C30～C39…） c30-bias.png（今は C36 が該当）
+    C47系（C45～C47…） c47-bias.png（今は C46 が該当）
+
 1つの手順が複数枚になる場合は、2枚目以降を -2.png、-3.png … とする（例：gp4000-clock-2.png）。
 JPEG（.jpg）でもよい。新しいシリーズを足すときは index.html の MANUAL_SERIES に1行追加する。
 

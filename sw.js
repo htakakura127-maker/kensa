@@ -1,5 +1,5 @@
 // 画面ファイルを端末にキャッシュし、圏外でもアプリを開けるようにする
-const CACHE = 'kensa-v17';
+const CACHE = 'kensa-v19';
 const ASSETS = ['./', './index.html', './manifest.json', './icon-180.png', './icon-512.png'];
 
 self.addEventListener('install', e => {
