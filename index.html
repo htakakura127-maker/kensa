@@ -226,11 +226,135 @@ const clone = o => JSON.parse(JSON.stringify(o));
 const ST = { TODO: '未着手', WORK: '作業中', DONE: '完了' };
 const KIND = { KEIKI: '計器', VALVE: '調節弁', TOUCH: 'タッチパネル' };
 
+// プレビュー（編集画面 editor.html の中に埋め込んで表示する）：サーバーにも端末の保存領域にも一切触れない
+const PREVIEW = new URLSearchParams(location.search).has('preview');
+// 編集画面とのやり取りの宛先（同じサイトだけ。PCのファイルを直接開いたテストでは origin が "null" になるため *）
+const MSG_TARGET = location.origin === 'null' ? '*' : location.origin;
+
 // ---- 端末内保存（圏外でも入力が消えないよう、変更のたびに書き込む）----
-const store = {
+//   プレビューでは本物の入力途中データを壊さないよう、メモリの中だけに置く
+const memStore = {};
+const store = PREVIEW ? {
+  get(k, d) { return k in memStore ? clone(memStore[k]) : d; },
+  set(k, v) { memStore[k] = clone(v); },
+} : {
   get(k, d) { try { const v = localStorage.getItem('kensa.' + k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
   set(k, v) { try { localStorage.setItem('kensa.' + k, JSON.stringify(v)); } catch (e) { alert('端末への保存に失敗しました: ' + e.message); } },
 };
+
+// ==== 設定：機器種類（判定の条件・表示する要素・手順）と、手順画像のシリーズ ====
+//   サーバーの「設定」シートで版ごとに管理し、編集画面（editor.html）で変える。ここにあるのは初期値（設定が無い・読めないときに使う）＝今までの動き。
+//   pc\check-read.ps1 も BEGIN～END の間を JSON として読むので、JSON の書き方（キーを "" で囲む・最後の , なし）を守ること。
+//   SHOW_DEF：機器種類ごとに切り替えられる要素。bases＝その様式で使えるもの、def＝設定に無いときの値、parent＝親が表示のときだけ有効、el＝説明（elements.json）の id
+const SHOW_DEF = /*SHOW_DEF_BEGIN*/[
+  { "key": "date", "label": "試験日", "bases": ["計器", "調節弁", "タッチパネル"], "def": true, "el": "date" },
+  { "key": "temp", "label": "温度", "bases": ["計器", "タッチパネル"], "def": true, "el": "temp" },
+  { "key": "lastTemp", "label": "最後に入力した温度（この温度を使う）", "bases": ["計器", "タッチパネル"], "def": true, "parent": "temp", "el": "temp" },
+  { "key": "tempReq", "label": "温度の空欄を未記入チェックの対象にする", "bases": ["計器", "タッチパネル"], "def": true, "parent": "temp", "req": true, "el": "missing" },
+  { "key": "checks", "label": "機器情報の確認（確認・変更）", "bases": ["計器", "調節弁", "タッチパネル"], "def": true, "el": "checks" },
+  { "key": "checksReq", "label": "「確認」していない項目を未記入チェックの対象にする", "bases": ["計器", "調節弁", "タッチパネル"], "def": true, "parent": "checks", "req": true, "el": "missing" },
+  { "key": "serialHint", "label": "製造時期の読み方（型番C・製造番号9桁のとき）", "bases": ["計器", "調節弁"], "def": true, "parent": "checks", "el": "serialHint" },
+  { "key": "pv", "label": "PV（入力すると記事に反映）", "bases": ["計器"], "def": true, "el": "pv" },
+  { "key": "pvFilter", "label": "PVフィルタ", "bases": ["計器"], "def": true, "parent": "pv", "el": "pv" },
+  { "key": "pvBias", "label": "PVバイアス", "bases": ["計器"], "def": true, "parent": "pv", "el": "pv" },
+  { "key": "pvValue", "label": "検査時PV", "bases": ["計器"], "def": true, "parent": "pv", "el": "pv" },
+  { "key": "pvReq", "label": "PVの空欄（不要以外）を未記入チェックの対象にする", "bases": ["計器"], "def": true, "parent": "pv", "req": true, "el": "missing" },
+  { "key": "clock", "label": "時刻合わせ（有無・ずれ → 記事に反映）", "bases": ["計器"], "def": false, "el": "clock" },
+  { "key": "clockReq", "label": "時刻合わせの有無・ずれの量を未記入チェックの対象にする", "bases": ["計器"], "def": true, "parent": "clock", "req": true, "el": "missing" },
+  { "key": "touchClockReq", "label": "時計のずれの分を未記入チェックの対象にする", "bases": ["タッチパネル"], "def": true, "req": true, "el": "touchItems" },
+  { "key": "clockJst", "label": "日本標準時間ボタン（時刻合わせ欄の中）", "bases": ["計器"], "def": true, "parent": "clock", "el": "jst" },
+  { "key": "jst", "label": "日本標準時間ボタン（各台の画面切り替えの下）", "bases": ["タッチパネル"], "def": true, "el": "jst" },
+  { "key": "pointsReq", "label": "測定値の空欄を未記入チェックの対象にする", "bases": ["計器", "調節弁"], "def": true, "req": true, "el": "points" },
+  { "key": "adjust", "label": "「調整した」（調整後の値の入力）", "bases": ["計器", "調節弁"], "def": true, "el": "points" },
+  { "key": "deviation", "label": "誤差の目安", "bases": ["計器", "調節弁"], "def": true, "el": "deviation" },
+  { "key": "result", "label": "判定（合格・不合格／良好・動作不良）", "bases": ["計器", "調節弁"], "def": true, "el": "result" },
+  { "key": "tests", "label": "耐圧・漏洩・気密試験", "bases": ["調節弁"], "def": true, "el": "tests" },
+  { "key": "parts", "label": "使用部品", "bases": ["計器", "調節弁"], "def": true, "el": "parts" },
+  { "key": "replaced", "label": "交換済みボタン（フィルター・パッキン類）", "bases": ["計器", "調節弁"], "def": true, "parent": "parts", "el": "replaced" },
+  { "key": "workerReq", "label": "作業員を未記入チェックの対象にする", "bases": ["計器", "調節弁", "タッチパネル"], "def": true, "req": true, "el": "stamps" },
+  { "key": "inspReq", "label": "検査員1名以上を未記入チェックの対象にする", "bases": ["計器", "調節弁", "タッチパネル"], "def": true, "req": true, "el": "stamps" }
+]/*SHOW_DEF_END*/;
+//   types：上から順に調べ、最初に当てはまった種類になる。base＝様式（報告書のシートの形。登録時に決まる）、when＝条件（すべて満たす。値はどれか1つに当てはまればよい）
+//   series：手順画像のシリーズ。prefixes＝型番の先頭（# は数字1文字、大文字小文字・全角半角は区別しない）、画像は manual/<key>-<手順>.png
+const DEFAULT_CONFIG = /*CONFIG_DEFAULT_BEGIN*/{
+  "version": 0,
+  "types": [
+    { "id": "rec_ctl", "name": "記録計（調節計・指示計の条件も満たす）", "base": "計器",
+      "when": [{ "field": "name", "op": "contains", "values": ["記録計"] }, { "field": "name", "op": "contains", "values": ["調節計", "指示計"] },
+        { "field": "model", "op": "startsWith", "values": ["C"] }, { "field": "serial", "op": "digits", "values": ["9"] }],
+      "show": { "clock": true }, "manual": ["clock", "bias"] },
+    { "id": "recorder", "name": "記録計", "base": "計器", "when": [{ "field": "name", "op": "contains", "values": ["記録計"] }], "show": { "clock": true }, "manual": ["clock"] },
+    { "id": "controller", "name": "調節計・指示計", "base": "計器",
+      "when": [{ "field": "model", "op": "startsWith", "values": ["C"] }, { "field": "serial", "op": "digits", "values": ["9"] }, { "field": "name", "op": "contains", "values": ["調節計", "指示計"] }],
+      "show": {}, "manual": ["bias"] },
+    { "id": "keiki", "name": "計器（その他）", "base": "計器", "when": [], "show": {}, "manual": [] },
+    { "id": "valve", "name": "調節弁", "base": "調節弁", "when": [], "show": {}, "manual": [] },
+    { "id": "touch", "name": "タッチパネル", "base": "タッチパネル", "when": [], "show": {}, "manual": ["brightness", "clock"] }
+  ],
+  "series": [
+    { "key": "gp4000", "name": "GP4000シリーズ", "prefixes": ["GP4###", "PFXGP4###"] },
+    { "key": "gp477r", "name": "GP477R・GP577R", "prefixes": ["GP477R", "GP577R"] },
+    { "key": "gt2000", "name": "GOT2000シリーズ", "prefixes": ["GT2###"] },
+    { "key": "dpr500", "name": "DPR500シリーズ", "prefixes": ["DPR5##"] },
+    { "key": "srf201a", "name": "SRF201A・SRF202A・SRF203A", "prefixes": ["SRF201A", "SRF202A", "SRF203A"] },
+    { "key": "srf206as", "name": "SRF206AS・SRF212AS・SRF224AS", "prefixes": ["SRF206AS", "SRF212AS", "SRF224AS"] },
+    { "key": "c40", "name": "C40", "prefixes": ["C40"] },
+    { "key": "c30", "name": "C30系（C36 など）", "prefixes": ["C3#"] },
+    { "key": "c47", "name": "C47系（C46 など）", "prefixes": ["C45", "C46", "C47"] }
+  ]
+}/*CONFIG_DEFAULT_END*/;
+const COND_FIELDS = { name: '名称', model: '型番', serial: '製造番号', loc: '据付場所', sheet: 'シート名', file: '報告書名' };
+const COND_OPS = { contains: 'を含む', notContains: 'を含まない', startsWith: 'で始まる', digits: 'が次の桁数の数字', empty: 'が空', notEmpty: 'が空でない' };
+
+// サーバーから来た設定が使える形か（だめなら初期値を使う）
+//   （手で直した設定などで形が崩れていても、入力画面が壊れないよう中まで確かめる。pc\check-read.ps1 の Test-ValidConfig も同じ）
+function validConfig(c) {
+  const isObj = x => x != null && typeof x === 'object' && !Array.isArray(x);
+  const isStrArr = x => Array.isArray(x) && x.every(v => typeof v === 'string' || typeof v === 'number');
+  if (!isObj(c) || !Array.isArray(c.types) || !c.types.length) return null;
+  const okType = t => isObj(t) && typeof t.id === 'string' && t.id && typeof t.name === 'string' && Object.values(KIND).includes(t.base) &&
+    (t.when == null || (Array.isArray(t.when) && t.when.every(w => isObj(w) && typeof w.field === 'string' && typeof w.op === 'string' && (w.values == null || isStrArr(w.values))))) &&
+    (t.show == null || isObj(t.show)) && (t.manual == null || isStrArr(t.manual));
+  if (!c.types.every(okType)) return null;
+  if (c.series != null && !(Array.isArray(c.series) && c.series.every(s => isObj(s) && typeof s.key === 'string' && (s.prefixes == null || isStrArr(s.prefixes))))) return null;
+  return c;
+}
+let appConfig = validConfig(store.get('config', null)) || DEFAULT_CONFIG;
+
+// 比べるときは全角半角・大文字小文字をそろえる。# は数字1文字
+const nk = s => String(s == null ? '' : s).normalize('NFKC').trim().toUpperCase();
+const patRe = p => new RegExp('^' + nk(p).replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/#/g, '[0-9]'));
+function condValue(d, f) {
+  const i = d.info || {};
+  return f === 'name' ? (i.name || d.tag) : f === 'model' ? i.model : f === 'serial' ? i.serial : f === 'loc' ? i.loc : f === 'sheet' ? d.sheet : f === 'file' ? d.file : '';
+}
+function testCond(d, c) {
+  const v = nk(condValue(d, c.field));
+  if (c.op === 'empty') return !v;
+  if (c.op === 'notEmpty') return !!v;
+  const vals = (c.values || []).map(nk).filter(Boolean);
+  if (!vals.length) return false;  // 値が空の条件（作りかけ）は当てはまらない扱い（作りかけの種類がほかの機器を取らないように）
+  if (c.op === 'contains') return vals.some(x => v.includes(x));
+  if (c.op === 'notContains') return !vals.some(x => v.includes(x));
+  if (c.op === 'startsWith') return vals.some(x => patRe(x).test(v));
+  if (c.op === 'digits') return vals.some(n => /^[0-9]+$/.test(n) && new RegExp(`^[0-9]{${+n}}$`).test(v));
+  return false;
+}
+const typeMatches = (d, t) => t.base === d.kind && (t.when || []).every(c => testCond(d, c));
+// 機器の種類（設定の上から順に、最初に当てはまったもの。どれにも当たらなければ様式の標準）
+function typeOf(d, conf) {
+  const c = conf || appConfig;
+  return c.types.find(t => typeMatches(d, t)) ||
+    { id: '', name: `${d.kind}（当てはまる種類なし）`, base: d.kind, when: [], show: {}, manual: d.kind === KIND.TOUCH ? ['brightness', 'clock'] : [] };
+}
+// その機器で要素を出すか（様式で使えない要素は出さない。親が非表示なら子も出さない）
+function opt(d, key) {
+  const def = SHOW_DEF.find(x => x.key === key);
+  if (!def || !def.bases.includes(d.kind)) return false;
+  if (def.parent && !opt(d, def.parent)) return false;
+  const v = (typeOf(d).show || {})[key];
+  return v == null ? def.def : !!v;
+}
 let cfg = store.get('cfg', null);          // { api, key, name }（サーバーURLは公開ファイルに置かず、設定コードで端末に保存）
 let names = store.get('names', []);
 let devices = store.get('devices', []);
@@ -248,8 +372,8 @@ let online = true;
 let syncing = false;
 let syncTimer = null;
 
-if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+if (!PREVIEW && navigator.storage && navigator.storage.persist) navigator.storage.persist();
+if (!PREVIEW && 'serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
 
 const saveDrafts = () => store.set('drafts', drafts);
 const getDev = id => devices.find(d => d.id === id);
@@ -259,10 +383,11 @@ const isNum = v => v !== null && v !== '' && !isNaN(+v);
 const fmt = v => v == null || v === '' ? '' : isNum(v) ? String(+(+v).toFixed(4)) : String(v);
 
 // ---- サーバー通信 ----
-const ready = () => !!(cfg && cfg.api && cfg.key && cfg.name);
+const ready = () => PREVIEW ? !!(cfg && cfg.name) : !!(cfg && cfg.api && cfg.key && cfg.name);
 
 // conn: 接続先と合言葉（初期設定の接続確認では、保存前の値を渡す）
 async function api(action, body, conn) {
+  if (PREVIEW) throw Object.assign(new Error('プレビューでは保存・送信はしません'), { code: 'preview' });
   const c = conn || cfg;
   if (!c || !c.api || !c.key) throw Object.assign(new Error('初期設定が済んでいません'), { code: 'config' });
   let res;
@@ -358,6 +483,12 @@ async function refresh(quiet) {
     fetchedAt = j.now;
     if (j.memos) { memos = j.memos; store.set('memos', memos); }
     if (j.notes) { notes = j.notes; store.set('notes', notes); }
+    // 設定（機器種類など）。サーバーに設定が無い・古いサーバー・使えない形なら初期値を使う
+    if ('config' in j) {
+      const c = validConfig(j.config);
+      appConfig = c || DEFAULT_CONFIG;
+      store.set('config', c);
+    }
     store.set('devices', devices);
     store.set('fetchedAt', fetchedAt);
     if (j.names && j.names.length) {
@@ -380,7 +511,7 @@ async function refresh(quiet) {
 
 // 未送信の入力を順に送る。失敗しても端末に残し、次の機会に再送する
 async function sync() {
-  if (syncing || !ready()) return;
+  if (PREVIEW || syncing || !ready()) return;
   syncing = true;
   try {
     for (const id of Object.keys(drafts)) {
@@ -415,12 +546,12 @@ function scheduleSync(ms) {
 }
 
 setInterval(async () => {
-  if (!ready()) return;
+  if (PREVIEW || !ready()) return;
   await sync();
   if (view.screen !== 'detail' && document.visibilityState === 'visible') refresh(true);
 }, 30000);
 window.addEventListener('online', () => sync());
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && ready()) { sync(); if (view.screen !== 'detail') refresh(true); } });
+document.addEventListener('visibilitychange', () => { if (!PREVIEW && document.visibilityState === 'visible' && ready()) { sync(); if (view.screen !== 'detail') refresh(true); } });
 
 // ---- データ ----
 function emptyCh() { return { up: ['', '', '', '', ''], down: ['', '', '', '', ''], adj: false, adjUp: ['', '', '', '', ''], adjDown: ['', '', '', '', ''] }; }
@@ -581,11 +712,12 @@ function serialDate(model, serial) {
   return `${s.slice(0, 4)}→${yy}_${ww}/4→${yy}年${month}月(${yy}年${+ww}週)`;
 }
 
-function checkRows(data, list, editable) {
+function checkRows(data, list, editable, d) {
   const dis = editable ? '' : 'disabled';
   const cur = c => (isChanged(data, c) ? fieldOf(data, c).value : c.value) || '';
   const model = list.find(x => x.key === 'model');
-  const hintOf = c => (c.key === 'serial' && model ? serialDate(cur(model), cur(c)) : '');
+  const hint = !d || opt(d, 'serialHint');  // 製造時期の読み方を出すか（機器種類の設定）
+  const hintOf = c => (hint && c.key === 'serial' && model ? serialDate(cur(model), cur(c)) : '');
   return list.map(c => {
     const f = fieldOf(data, c);
     const changed = isChanged(data, c);
@@ -623,7 +755,7 @@ function partsSection(d, data, editable) {
     const done = !!data.replaced[n];
     return `<div class="part"><span class="pn">${h(p.name)}</span>
       <span class="pq">${p.qty != null && p.qty !== '' ? h(fmt(p.qty)) + ' 個' : ''}${p.kind ? '　' + h(p.kind) : ''}</span>
-      ${isFilterPart(p.name) ? `<button type="button" class="xchg ${done ? 'on' : ''}" data-act="replaced" data-n="${n}" ${dis}>${done ? '✓ 交換済み' : '交換済み'}</button>` : ''}
+      ${isFilterPart(p.name) && opt(d, 'replaced') ? `<button type="button" class="xchg ${done ? 'on' : ''}" data-act="replaced" data-n="${n}" ${dis}>${done ? '✓ 交換済み' : '交換済み'}</button>` : ''}
     </div>`;
   }).join('');
   if (editable) html += `<button class="btn small" data-act="partsedit">使用部品を編集</button>`;
@@ -647,7 +779,9 @@ function pvItems(d) {
       items.push({ key: 'pv', k, path: `pv.v.${k}`, label: `検査時PV CH${k + 1}`, unit: unit(k) });
     }
   }
-  return items;
+  // 機器種類の設定で出さない項目（PVフィルタ・PVバイアス・検査時PV）は除く（記事にも反映しない）
+  const on = { filter: opt(d, 'pvFilter'), bias: opt(d, 'pvBias'), pv: opt(d, 'pvValue') };
+  return items.filter(it => on[it.key]);
 }
 const getPath = (obj, path) => path.split('.').reduce((o, k) => (o == null ? o : o[k]), obj);
 const pvInput = (data, it) => String(getPath(data, it.path) || '').trim();
@@ -688,7 +822,8 @@ function pvFields(d, data, editable) {
       <input class="num" inputmode="decimal" data-k="${it.path}" value="${na ? '' : h(pvInput(data, it))}" placeholder="${na ? '不要' : h(prev.replace(/[^\d.+\-]/g, ''))}" ${na ? 'disabled' : dis}>
       <div class="hint"><span class="prev">${prev ? '前回 ' + h(prev) : ''}</span></div></div>`;
   });
-  if (n > 1) cells.splice(1, 0, '<div></div>');  // 2CH以上は「PVバイアス CHn」「検査時PV CHn」を1行に並べる
+  // 2CH以上は「PVバイアス CHn」「検査時PV CHn」を1行に並べる（PVフィルタの横を空ける）
+  if (n > 1 && opt(d, 'pvFilter') && opt(d, 'pvBias') && opt(d, 'pvValue')) cells.splice(1, 0, '<div></div>');
   return `<div class="grid2 pv">${cells.join('')}</div><p class="muted" style="margin:-4px 0 8px">PV の値は入力すると記事に反映されます。機器に無い項目は「不要」を押してください。</p>`;
 }
 
@@ -730,7 +865,6 @@ function applyPv(d, data) {
 }
 
 // ---- 記録計の時刻合わせ。選ぶと記事の「時刻合わせ」の文を書き換える（無ければ最後に1行足す）----
-const isRecorder = d => d.kind === KIND.KEIKI && /記録計/.test((d.info && d.info.name) || d.tag || '');
 const CLOCK_NOTE_RE = /※?時刻合わせ(?:実施|無し)。?(?:[（(][^）)]*[）)])?|※?時計設定\d+(?:分|秒)(?:遅れ|進み)/;
 function clockNoteText(c) {
   if (!c.done) return '';
@@ -751,7 +885,7 @@ function clockSection(d, data, editable) {
   const dis = editable ? '' : 'disabled';
   const c = data.clock;
   const prev = (d.info.prev.note || []).map(l => (l.match(CLOCK_NOTE_RE) || [])[0]).find(Boolean) || '（記事に記載なし）';
-  return `<h3>時刻合わせ（記録計） <small>選ぶと記事に反映されます</small></h3>
+  return `<h3>時刻合わせ${recSuffix(d)} <small>選ぶと記事に反映されます</small></h3>
     <div class="grid2">
       <label>時刻合わせ<select data-k="clock.done" ${dis}>${opts(['', '有', '無'], c.done).replace('<option ', '<option value="" ').replace('></option>', '>（選択）</option>')}</select></label>
       <label>ずれ<select data-k="clock.dir" ${dis}>${opts(['遅れ', '進み'], c.dir)}</select></label>
@@ -760,30 +894,25 @@ function clockSection(d, data, editable) {
     </div>
     <div class="ptext">(今回)<span id="clock-now">${h(clockNoteText(c) || '（有・無を選んでください）')}</span></div>
     <div class="ptext">(前回)${h(prev)}</div>
-    <button type="button" class="btn small" data-act="jst">日本標準時間</button>`;
+    ${opt(d, 'clockJst') ? '<button type="button" class="btn small" data-act="jst">日本標準時間</button>' : ''}`;
 }
 
 // ---- 修正手順（記録計・タッチパネル）・確認手順（調節計）。web/manual/ に置いた画像を表示する ----
 //   タッチパネルは機種のシリーズごとに手順が違うため、シートの各台の型番からシリーズを判定し、シリーズごとに画像を出す
 //   画像の名前：<シリーズ>-<手順>.png（2枚目以降は -2.png、-3.png …）。例：gp4000-clock.png
 const MANUAL_PROCS = { brightness: '輝度調整', clock: '時刻合わせ', bias: 'PVフィルタ・バイアス' };
-const MANUAL_SERIES = [
-  { re: /^(PFX)?GP4\d{3}/i, key: 'gp4000', name: 'GP4000シリーズ' },
-  { re: /^GP[45]77R/i, key: 'gp477r', name: 'GP477R・GP577R' },
-  { re: /^GT2\d{3}/i, key: 'gt2000', name: 'GOT2000シリーズ' },
-  // 記録計（時刻合わせのみ）
-  { re: /^DPR5\d{2}/i, key: 'dpr500', name: 'DPR500シリーズ' },
-  { re: /^SRF20[123]A/i, key: 'srf201a', name: 'SRF201A・SRF202A・SRF203A' },
-  { re: /^SRF2(06|12|24)AS/i, key: 'srf206as', name: 'SRF206AS・SRF212AS・SRF224AS' },
-  // 調節計・指示計（確認手順：PVフィルタ・バイアス）
-  { re: /^C40/i, key: 'c40', name: 'C40' },
-  { re: /^C3\d/i, key: 'c30', name: 'C30系（C36 など）' },
-  { re: /^C4[5-7]/i, key: 'c47', name: 'C47系（C46 など）' },
-];
-// 確認手順を出す調節計・指示計：型番が C で始まり、製造番号が9桁の数字で、名称に「調節計」か「指示計」とあるもの
-const isController = d => d.kind === KIND.KEIKI && /^[CＣ]/i.test(String(d.info.model || '').trim()) &&
-  /^\d{9}$/.test(String(d.info.serial || '').trim()) && /調節計|指示計/.test(d.info.name || '');
-const seriesOf = model => MANUAL_SERIES.find(x => x.re.test(String(model || '').trim()));
+// 時刻合わせの見出しの「（記録計）」は、名称に記録計とある機器だけに付ける（記録計以外の種類に時刻合わせを出す設定もできるため）
+const recSuffix = d => /記録計/.test((d.info && d.info.name) || d.tag || '') ? '（記録計）' : '';
+// その機器で見られる手順（設定の機器種類の manual。輝度調整はタッチパネル、PVフィルタ・バイアスは計器だけ。調節弁には無い）
+function manualProcs(d) {
+  return (typeOf(d).manual || []).filter(p => MANUAL_PROCS[p] && d.kind !== KIND.VALVE &&
+    (p !== 'brightness' || d.kind === KIND.TOUCH) && (p !== 'bias' || d.kind === KIND.KEIKI));
+}
+// 手順画像のシリーズ（設定の series。型番の先頭で判定）
+const seriesOf = model => {
+  const m = nk(model);
+  return (appConfig.series || DEFAULT_CONFIG.series).find(s => (s.prefixes || []).some(p => nk(p) && patRe(p).test(m)));
+};
 const loadImg = src => new Promise(ok => { const img = new Image(); img.onload = () => ok(img); img.onerror = () => ok(null); img.src = src; });
 async function loadManualImages(base) {
   const list = [];
@@ -798,18 +927,16 @@ async function loadManualImages(base) {
 }
 
 async function showManual(d) {
-  let proc = 'clock';
-  if (isController(d)) {
-    proc = await choose('確認手順を選んでください。', [
-      { key: 'bias', label: 'PVフィルタ・バイアス' },
-      { key: 'cancel', label: 'キャンセル' },
-    ]);
-    if (!MANUAL_PROCS[proc]) return;
-  }
-  if (d.kind === KIND.TOUCH) {
-    proc = await choose('修正手順を選んでください。', [
-      { key: 'brightness', label: '輝度調整' },
-      { key: 'clock', label: '時刻合わせ' },
+  // 手順が「時刻合わせ」だけ（記録計）ならすぐ出す。それ以外（タッチパネル、PVフィルタ・バイアスのある計器）は選んでもらう
+  const procs = manualProcs(d);
+  if (!procs.length) return;
+  let proc = procs[0];
+  //   （PVフィルタ・バイアスは、1つだけでも選んでから出す＝調節計の確認手順の決まり）
+  if (!(procs.length === 1 && proc !== 'bias')) {
+    const mixed = d.kind !== KIND.TOUCH && procs.includes('clock') && procs.length > 1;
+    const title = d.kind === KIND.TOUCH ? '修正手順を選んでください。' : mixed ? '手順を選んでください。' : procs.includes('clock') ? '修正手順を選んでください。' : '確認手順を選んでください。';
+    proc = await choose(title, [
+      ...procs.map(p => ({ key: p, label: p === 'clock' && mixed ? '時刻合わせ（修正手順）' : MANUAL_PROCS[p] })),
       { key: 'cancel', label: 'キャンセル' },
     ]);
     if (!MANUAL_PROCS[proc]) return;
@@ -834,7 +961,7 @@ async function showManual(d) {
   if (other.length) groups.push({ title: '手順の無い機種', panels: other });
   const el = document.createElement('div');
   el.className = 'modal manual';
-  el.innerHTML = `<div class="box"><div class="msg" style="font-weight:700">${proc === 'bias' ? '確認手順：PVフィルタ・バイアス（' + (/指示計/.test(d.info.name || '') && !/調節計/.test(d.info.name || '') ? '指示計' : '調節計') + '）' : '修正手順：' + h(MANUAL_PROCS[proc]) + (d.kind === KIND.TOUCH ? '' : '（記録計）')}</div>
+  el.innerHTML = `<div class="box"><div class="msg" style="font-weight:700">${proc === 'bias' ? '確認手順：PVフィルタ・バイアス（' + (/指示計/.test(d.info.name || '') && !/調節計/.test(d.info.name || '') ? '指示計' : '調節計') + '）' : '修正手順：' + h(MANUAL_PROCS[proc]) + (d.kind === KIND.TOUCH ? '' : recSuffix(d))}</div>
     ${groups.map((g, i) => `<div class="man-group">${g.title ? `<div class="man-title">${h(g.title)}</div>` : ''}
       ${g.panels.length ? `<div class="muted">${g.panels.map(h).join('<br>')}</div>` : ''}
       <div data-man-imgs="${i}">${g.bases ? '<p class="muted">読み込み中…</p>' : ''}</div></div>`).join('')}
@@ -971,7 +1098,7 @@ function localStatus(d) {
   if (dr && dr.finish && dr.pending) return { cls: 'pend', text: '完了(未送信)' };
   if (d.status === ST.WORK) return { cls: 'work', text: d.worker === cfg.name ? '作業中(自分)' : '作業中 ' + d.worker };
   if (d.status === ST.DONE) return { cls: 'done', text: '完了' };
-  // 中断（保存）されたもの：確認ボタンや交換済みを押してあれば「動作確認待ち」、それ以外は「一時保存(名前)」
+  // 中断（保存）されたもの：フィルター・パッキン類を「交換済み」にしてあれば「動作確認待ち」、それ以外は「一時保存(名前)」
   if (d.data && d.worker) return waitingCheck(d) ? { cls: 'wait', text: '動作確認待ち' } : { cls: 'temp', text: `一時保存(${d.worker})` };
   return { cls: 'todo', text: '未着手' };
 }
@@ -1007,6 +1134,7 @@ function render() {
 const BACK_LABEL = { plants: '工場', locs: '報告書', list: '一覧' };
 
 function renderTop(title, back) {
+  if (PREVIEW) { $('#top').innerHTML = `<div class="ttl">${h(title)}</div><span class="net">プレビュー</span>`; return; }
   $('#top').innerHTML = `${back ? `<button class="back" data-act="back">‹ ${h(back)}</button>` : ''}<div class="ttl">${h(title)}</div><button class="net" id="net" data-act="sync"></button>`;
   renderNet();
 }
@@ -1219,6 +1347,7 @@ function infoCard(d) {
 
 // ---- 機器メモ・フラグ（全員で共有。Excelには書かない。データ初期化しても消えない）----
 function flagButton(d) {
+  if (PREVIEW) return '';
   const on = !!(notes[d.id] || {}).flag;
   return `<button type="button" class="flagbtn ${on ? 'on' : ''}" data-act="flag">${on ? 'フラグ中' : 'フラグ'}</button>`;
 }
@@ -1294,8 +1423,13 @@ function detailsBlock(i) {
   const list = i.details || [];
   // 記録計・タッチパネルは「修正手順」（画像）も見られるようにする
   const d = getDev(view.id);
-  const manual = d && (d.kind === KIND.TOUCH || isRecorder(d)) ? '<button type="button" class="btn small" data-act="manual">修正手順</button>'
-    : d && isController(d) ? '<button type="button" class="btn small" data-act="manual">確認手順</button>' : '';
+  // 記録計で調節計・指示計の条件にも当てはまる機種（名称に「記録計」と「調節計」か「指示計」の両方を含むもの。例：温度記録計（指示計）。
+  //   「指示記録計」「記録調節計」は「指示計」「調節計」が続けて書かれていないので当てはまらない）は、時刻合わせと PVフィルタ・バイアスの両方を選べる
+  //   ボタン名は機器種類の手順で決まる（時刻合わせ・輝度調整＝修正手順、PVフィルタ・バイアス＝確認手順、両方＝修正・確認手順）
+  const procs = d ? manualProcs(d) : [];
+  const fix = procs.some(p => p !== 'bias');
+  const label = !procs.length ? '' : d.kind === KIND.TOUCH ? '修正手順' : fix && procs.includes('bias') ? '修正・確認手順' : fix ? '修正手順' : '確認手順';
+  const manual = label ? `<button type="button" class="btn small" data-act="manual">${label}</button>` : '';
   if (!list.length) return manual;
   return `${manual}<button type="button" class="btn small" data-act="details">${view.details ? '詳細を閉じる ▲' : '詳細を表示 ▼'}</button>
     ${view.details ? `<div class="details">${list.map(x => `<div class="ditem"><div class="dl">${h(x.label)}</div><div class="dv">${h(x.value).replace(/\n/g, '<br>')}</div></div>`).join('')}</div>` : ''}`;
@@ -1326,7 +1460,9 @@ function renderDetail() {
     data = d.data ? normalize(d, d.data) : null;
     actions = `<button class="btn warn" data-act="force">強制解除（放置されている場合）</button>`;
   } else if (d.status === ST.DONE) {
-    head = `<div class="notice done">完了済みです（${h(hm(d.updatedAt))}${d.worker ? '・' + h(d.worker) : ''}）${d.exportedAt ? '・Excel反映済み' : ''}</div>`;
+    // 反映した後に直して再び完了したもの（updatedAt が新しい）は、まだ反映されていない
+    const exported = d.exportedAt && !(String(d.updatedAt || '') > String(d.exportedAt));
+    head = `<div class="notice done">完了済みです（${h(hm(d.updatedAt))}${d.worker ? '・' + h(d.worker) : ''}）${exported ? '・Excel反映済み' : d.exportedAt ? '・Excel未反映（反映後に修正）' : ''}</div>`;
     data = normalize(d, d.data);
     actions = `<button class="btn" data-act="reopen">修正のため再開する</button>`;
   } else {
@@ -1338,9 +1474,11 @@ function renderDetail() {
     actions = `<button class="btn primary" data-act="start">作業開始</button>`;
   }
 
+  // プレビューでは保存・送信のボタンを出さない
+  if (PREVIEW) actions = '<div class="muted" style="flex:1;text-align:center;padding:8px">プレビュー：入力を試せますが、保存・送信はしません</div>';
   $('#app').innerHTML = `${infoCard(d)}${head}
     ${data ? `<section class="card">${form(d, data, editable)}</section>` : ''}
-    ${devMemoSection(d)}
+    ${PREVIEW ? '' : devMemoSection(d)}
     <div class="actions"><div class="inner">${actions}</div></div>`;
   if (data) updateDevs(d, data);
   markMissing();
@@ -1373,22 +1511,24 @@ function pointTable(ch, k, upKey, downKey, c, editable, caption, showPrev) {
 function form(d, data, editable) {
   const i = d.info;
   const dis = editable ? '' : 'disabled';
-  const showDate = d.kind !== KIND.TOUCH || i.hasDate;
-  const showTemp = d.kind !== KIND.VALVE;
+  // 何を出すかは機器種類の設定（opt）で決まる。試験日はタッチパネルでは試験日欄がある様式だけ
+  const showDate = opt(d, 'date') && (d.kind !== KIND.TOUCH || i.hasDate);
+  const showTemp = opt(d, 'temp');
+  const showChecks = opt(d, 'checks');
   let html = `<div class="grid2">
       ${showDate ? `<label>試験日<input type="date" data-k="date" value="${h(data.date)}" ${dis}></label>` : ''}
       ${showTemp ? `<label>温度 (℃)<input class="num" inputmode="decimal" data-k="temp" value="${h(data.temp)}" placeholder="${h(fmt(i.prev.temp))}" ${dis}>
         <div class="hint"><span class="prev">${i.prev.temp != null ? '前回 ' + h(fmt(i.prev.temp)) + '℃' : ''}</span></div></label>` : ''}
     </div>
-    ${showTemp && editable ? lastTempBlock() : ''}
-    ${showDate ? '' : '<p class="muted">この報告書には試験日の欄がありません。</p>'}`;
+    ${showTemp && editable && opt(d, 'lastTemp') ? lastTempBlock() : ''}
+    ${showDate || !opt(d, 'date') ? '' : '<p class="muted">この報告書には試験日の欄がありません。</p>'}`;
   // 並び：試験日・温度 → 機器情報の確認 → PV（計器）→ 時刻合わせ（記録計）
   const checks = i.checks || [];
   const checkHelp = '<small>現物と見比べて「確認」。違っていたら「変更」（報告書のセルが黄色になります）</small>';
-  if (d.kind !== KIND.TOUCH && checks.length) html += `<h3>機器情報の確認 ${checkHelp}</h3>${checkRows(data, checks, editable)}`;
-  if (d.kind === KIND.TOUCH && checks.length) html += `<h3>機器情報の確認 ${checkHelp}</h3>`;
-  if (d.kind === KIND.KEIKI) html += `<h3>PV</h3>${pvFields(d, data, editable)}`;
-  if (isRecorder(d)) html += clockSection(d, data, editable);
+  if (d.kind !== KIND.TOUCH && checks.length && showChecks) html += `<h3>機器情報の確認 ${checkHelp}</h3>${checkRows(data, checks, editable, d)}`;
+  if (d.kind === KIND.TOUCH && checks.length && showChecks) html += `<h3>機器情報の確認 ${checkHelp}</h3>`;
+  if (opt(d, 'pv') && pvItems(d).length) html += `<h3>PV</h3>${pvFields(d, data, editable)}`;
+  if (opt(d, 'clock')) html += clockSection(d, data, editable);
 
   if (d.kind === KIND.TOUCH) {
     html += i.panels.map((p, b) => {
@@ -1403,13 +1543,13 @@ function form(d, data, editable) {
             <div class="ptext">(前回)${h((p.prev || [])[2] || '')}</div>`;
         }
         // 画面切り替えの下に、日本標準時（NICT）を表示するボタン
-        const jst = j === 3 ? '<button type="button" class="btn small" data-act="jst">日本標準時間</button>' : '';
+        const jst = j === 3 && opt(d, 'jst') ? '<button type="button" class="btn small" data-act="jst">日本標準時間</button>' : '';
         return `<div class="pitem"><span>${h(label)}</span><select data-k="panels.${b}.items.${j}" ${dis}>${opts(['良好', '不良'], pd.items[j])}</select></div>${jst}`;
       }).join('');
       const pc = checks.filter(c => c.panel === b);
       const prevNg = (p.prev || []).filter((x, j) => j !== 2 && x && x !== '良好');
       return `<div class="panel"><div class="pname">${h(p.name)}</div>
-        ${pc.length ? checkRows(data, pc, editable) : `<div class="muted">${h(p.model)}　${h(p.serial)}${p.made ? '　' + h(p.made) : ''}</div>`}${items}
+        ${pc.length && showChecks ? checkRows(data, pc, editable, d) : `<div class="muted">${h(p.model)}　${h(p.serial)}${p.made ? '　' + h(p.made) : ''}</div>`}${items}
         ${prevNg.length ? `<div class="ptext">前回（時計以外）：${h(prevNg.join('／'))}</div>` : ''}</div>`;
     }).join('');
   } else {
@@ -1418,18 +1558,19 @@ function form(d, data, editable) {
       const title = d.kind === KIND.VALVE ? 'ストローク' : (i.chs.length > 1 ? 'CH' + (k + 1) + ' ' : '') + '測定値';
       html += `<h3>${title} <small>目盛 ${h(ch.scale)}　「前」＝前回値</small></h3>`;
       html += pointTable(ch, k, 'up', 'down', c, editable, '調整前', true);
-      html += `<label class="chk"><input type="checkbox" data-k="ch.${k}.adj" ${c.adj ? 'checked' : ''} ${dis}>調整した（調整後の値も入力）</label>`;
+      // 「調整した」を出さない種類でも、既に調整後の値がある（チェック済み）なら外せるように出す
+      if (opt(d, 'adjust') || c.adj) html += `<label class="chk"><input type="checkbox" data-k="ch.${k}.adj" ${c.adj ? 'checked' : ''} ${dis}>調整した（調整後の値も入力）</label>`;
       if (c.adj) html += pointTable(ch, k, 'adjUp', 'adjDown', c, editable, '調整後', false);
     });
     if (d.kind === KIND.KEIKI) {
-      html += `<div class="grid2" style="margin-top:12px">
+      if (opt(d, 'result')) html += `<div class="grid2" style="margin-top:12px">
         <label>判定<select data-k="result" ${dis}>${opts(['合格', '不合格'], data.result)}</select></label></div>`;
     } else {
-      html += `<div class="grid2" style="margin-top:12px">
+      if (opt(d, 'result')) html += `<div class="grid2" style="margin-top:12px">
         <label>判定<select data-k="judge" ${dis}>${opts(['良好', '動作不良'], data.judge)}</select></label></div>`;
-      html += testsSection(d, data, editable);
+      if (opt(d, 'tests')) html += testsSection(d, data, editable);
     }
-    html += partsSection(d, data, editable);
+    if (opt(d, 'parts')) html += partsSection(d, data, editable);
   }
 
   // 署名（印影）：報告書の検査・作業員欄の一番右が作業員、右から2番目より左が検査員（押した順）
@@ -1444,12 +1585,14 @@ function form(d, data, editable) {
     }).join('')}</div>
     <label style="margin-top:14px">記事<textarea data-k="note" ${dis}>${h(data.note)}</textarea></label>
     <div class="noteprev" id="noteprev">${notePreview(d, data.note)}</div>
-    ${i.chs && i.chs.length ? '<p class="muted">誤差は「(測定値−基準)÷スパン」の目安です。精度を超えると赤字になります。正式な値はExcelで計算されます。</p>' : ''}`;
+    ${i.chs && i.chs.length && opt(d, 'deviation') ? '<p class="muted">誤差は「(測定値−基準)÷スパン」の目安です。精度を超えると赤字になります。正式な値はExcelで計算されます。</p>' : ''}`;
   return html;
 }
 
 function updateDevs(d, data) {
+  const on = opt(d, 'deviation');
   document.querySelectorAll('[data-dev]').forEach(el => {
+    if (!on) { el.textContent = ''; el.className = 'dev'; return; }
     const [, k, key, i] = el.dataset.dev.split('.');
     const ch = d.info.chs[k];
     const p = ch && ch.points[i];
@@ -1537,9 +1680,10 @@ async function forceRelease() {
 }
 
 // 完了前に確認する未記入の箇所。調整したチェック（と調整しない場合の調整後の値）、2人目以降の検査員は対象外
+//   何を対象にするかは機器種類の設定（〇〇Req）で決まる（出していない要素は対象外）
 function findMissing(d, data) {
   const keys = [];
-  data.ch.forEach((c, k) => {
+  if (opt(d, 'pointsReq')) data.ch.forEach((c, k) => {
     const pairs = c.adj ? [['up', 'down'], ['adjUp', 'adjDown']] : [['up', 'down']];
     pairs.forEach(([u, dn]) => {
       for (let i = 0; i < 5; i++) {
@@ -1548,21 +1692,24 @@ function findMissing(d, data) {
       }
     });
   });
-  const temp = d.kind !== KIND.VALVE && String(data.temp || '').trim() === '';
+  const temp = opt(d, 'tempReq') && String(data.temp || '').trim() === '';
   if (temp) keys.push('temp');
-  const clock = isRecorder(d) && !data.clock.done;
+  const clockOn = opt(d, 'clockReq');
+  const clock = clockOn && !data.clock.done;
   if (clock) keys.push('clock.done');
   // 時計のずれの量：記録計で「有」、タッチパネルで「遅れ／進み」を選んだのに空欄（報告書が「○分」になってしまう）
   const clockAmt = [];
-  if (isRecorder(d) && data.clock.done === '有' && !String(data.clock.amount || '').trim()) clockAmt.push('clock.amount');
-  (data.panels || []).forEach((p, b) => {
+  if (clockOn && data.clock.done === '有' && !String(data.clock.amount || '').trim()) clockAmt.push('clock.amount');
+  if (opt(d, 'touchClockReq')) (data.panels || []).forEach((p, b) => {
     if (p.clockDir && p.clockDir !== CLOCK_OK && !String(p.clockMin || '').trim()) clockAmt.push(`panels.${b}.clockMin`);
   });
   keys.push(...clockAmt);
   // PV（計器）：「不要」にしていない空欄
-  const pv = d.kind === KIND.KEIKI ? pvItems(d).filter(it => !data.pv.na[it.path] && !pvInput(data, it)).map(it => it.path) : [];
+  const pv = opt(d, 'pvReq') ? pvItems(d).filter(it => !data.pv.na[it.path] && !pvInput(data, it)).map(it => it.path) : [];
   keys.push(...pv);
-  const checks = (d.info.checks || []).filter(c => !fieldOf(data, c).ok).map(c => c.key);
+  const checks = opt(d, 'checksReq') ? (d.info.checks || []).filter(c => !fieldOf(data, c).ok).map(c => c.key) : [];
+  const noWorker = opt(d, 'workerReq') && !data.worker;
+  const noInsp = opt(d, 'inspReq') && !data.inspectors.length;
   const msg = [];
   const meas = keys.filter(k => k.startsWith('ch.')).length;  // 温度・時刻合わせは個別に数える
   if (meas) msg.push(`・測定値 ${meas} か所`);
@@ -1571,9 +1718,9 @@ function findMissing(d, data) {
   if (clockAmt.length) msg.push(`・時計のずれの量 ${clockAmt.length} か所`);
   if (pv.length) msg.push(`・PV ${pv.length} か所（機器に無い項目は「不要」）`);
   if (checks.length) msg.push(`・機器情報の「確認」 ${checks.length} 件`);
-  if (!data.worker) msg.push('・作業員');
-  if (!data.inspectors.length) msg.push('・検査員（1名以上）');
-  return { keys, checks, worker: !data.worker, insp: !data.inspectors.length, msg };
+  if (noWorker) msg.push('・作業員');
+  if (noInsp) msg.push('・検査員（1名以上）');
+  return { keys, checks, worker: noWorker, insp: noInsp, msg };
 }
 
 // 未記入の箇所を赤枠にする（完了しようとした後だけ。入力するたびに更新）
@@ -1914,8 +2061,53 @@ kb.addEventListener('click', e => {
   else if (b.dataset.kb === 'done') activeNum.blur();
 });
 
-render();
-if (ready()) { sync(); refresh(true); }
+// ---- プレビュー（editor.html の中に埋め込む）----
+//   編集画面から { type:'preview', config, device, names, mode } を受け取り、その設定でその機器の画面を出す（保存・送信はしない）
+//   { type:'classify', config, devices } には、各機器の種類と手順画像のシリーズを返す（判定の計算をアプリと同じものにするため）
+if (PREVIEW) {
+  window.addEventListener('message', e => {
+    if (e.origin !== location.origin || !e.data) return;
+    const m = e.data;
+    if (m.type === 'hello') sendReady();
+    else if (m.type === 'preview') {
+      appConfig = validConfig(m.config) || DEFAULT_CONFIG;
+      names = (m.names && m.names.length) ? m.names : ['作業員'];
+      cfg = { api: '', key: '', name: names[0] };
+      const d = clone(m.device);
+      if (m.mode === 'todo') { d.status = ST.TODO; d.worker = ''; d.data = null; drafts = {}; }
+      else {
+        d.status = ST.WORK; d.worker = cfg.name;
+        drafts = { [d.id]: { data: normalize(d, null), rev: 0, pending: false } };
+      }
+      devices = [d];
+      view = Object.assign(view, { screen: 'detail', id: d.id, from: 'list', details: !!m.details, partsEdit: false, testsEdit: false, showMissing: false });
+      render();
+      window.scrollTo(0, 0);
+    } else if (m.type === 'classify') {
+      const conf = validConfig(m.config) || DEFAULT_CONFIG;
+      const saved = appConfig;
+      appConfig = conf;
+      const result = (m.devices || []).map(d => {
+        const t = typeOf(d);
+        const models = d.kind === KIND.TOUCH ? (d.info.panels || []).map(p => p.model) : [d.info && d.info.model];
+        return { id: d.id, type: t.id, typeName: t.name, series: models.map(x => (seriesOf(x) || {}).key || '') };
+      });
+      appConfig = saved;
+      e.source.postMessage({ type: 'classified', seq: m.seq, result }, MSG_TARGET);
+    }
+  });
+  // 編集画面へ「準備ができた」と、アプリの初期値・要素の一覧などを送る（編集画面はこれを使うので、定義はアプリの中の1か所だけ）
+  function sendReady() {
+    if (window.parent !== window) {
+      window.parent.postMessage({ type: 'previewReady', defaults: DEFAULT_CONFIG, showDef: SHOW_DEF, condFields: COND_FIELDS, condOps: COND_OPS, procs: MANUAL_PROCS, kinds: Object.values(KIND) }, MSG_TARGET);
+    }
+  }
+  sendReady();
+  $('#app').innerHTML = '<p class="muted" style="padding:16px">プレビューの準備中…</p>';
+} else {
+  render();
+  if (ready()) { sync(); refresh(true); }
+}
 </script>
 </body>
 </html>

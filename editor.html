@@ -1,0 +1,651 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>検査アプリ 設定の編集</title>
+<style>
+:root { --ink: #1d2733; --sub: #5d6b78; --line: #d5dce3; --bg: #f3f5f8; --card: #fff; --pri: #1f4e79; --ok: #23804d; --ng: #c62828; --warn: #b26a00; --hl: #fff4d6; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.55 "Yu Gothic UI", "Meiryo", -apple-system, sans-serif; }
+header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 14px; background: var(--pri); color: #fff; }
+header h1 { font-size: 17px; margin: 0 8px 0 0; }
+header .st { font-size: 13px; opacity: .92; }
+header .sp { flex: 1; }
+button { font: inherit; cursor: pointer; border: 1px solid var(--line); background: #fff; color: var(--ink); border-radius: 8px; padding: 5px 11px; }
+button:hover { background: #eef3f8; }
+button.pri { background: #ffb300; border-color: #ffb300; color: #1d2733; font-weight: 700; }
+button.ghost { background: transparent; color: #fff; border-color: rgba(255,255,255,.6); }
+button.small { padding: 2px 8px; font-size: 12.5px; }
+button.del { color: var(--ng); }
+button:disabled { opacity: .45; cursor: default; }
+input, select, textarea { font: inherit; border: 1px solid var(--line); border-radius: 6px; padding: 4px 7px; background: #fff; }
+.wrap { display: grid; grid-template-columns: 300px minmax(420px, 1fr) 430px; gap: 12px; padding: 12px; align-items: start; }
+.col { min-width: 0; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; }
+.card h2 { font-size: 15px; margin: 0 0 8px; }
+.card h3 { font-size: 14px; margin: 14px 0 6px; padding-top: 10px; border-top: 1px solid var(--line); }
+.muted { color: var(--sub); font-size: 12.5px; }
+.tabs { display: flex; gap: 6px; margin-bottom: 10px; }
+.tabs button.on { background: var(--pri); color: #fff; border-color: var(--pri); }
+.tabs { flex-wrap: wrap; } .tabs button { white-space: nowrap; }
+.tlist .t { border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; margin-bottom: 6px; cursor: pointer; background: #fff; }
+.tlist .t.on { border-color: var(--pri); box-shadow: 0 0 0 2px rgba(31,78,121,.25); }
+.tlist .t .nm { font-weight: 700; }
+.tlist .t .cond { font-size: 12px; color: var(--sub); }
+.tlist .t .cnt { float: right; font-size: 12px; color: var(--sub); }
+.badge { display: inline-block; font-size: 11.5px; padding: 0 7px; border-radius: 99px; color: #fff; background: #5d6b78; margin-right: 4px; vertical-align: 1px; }
+.b-計器 { background: #1f4e79; } .b-調節弁 { background: #6a3d9a; } .b-タッチパネル { background: #00796b; }
+.row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 4px 0; }
+.row label { color: var(--sub); }
+.cond-row { display: grid; grid-template-columns: 100px 140px minmax(0, 1fr) 28px; gap: 6px; margin: 4px 0; }
+.cond-row > * { min-width: 0; }
+.el { border-bottom: 1px dashed var(--line); padding: 4px 0; }
+.el.child { margin-left: 24px; }
+.el .lb { display: flex; gap: 6px; align-items: center; }
+.el .lb input { width: 17px; height: 17px; }
+.el .lb.off { color: var(--sub); }
+.el .info { margin: 4px 0 4px 24px; font-size: 12.5px; background: #f7f9fb; border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; display: grid; grid-template-columns: 96px 1fr; gap: 2px 8px; }
+.el .info div:nth-child(odd) { color: var(--sub); }
+.el .q { border: 0; background: none; color: var(--pri); padding: 0 4px; font-size: 12.5px; text-decoration: underline; }
+.changed { background: var(--hl); }
+.phone { width: 400px; height: 780px; border: 10px solid #222; border-radius: 28px; overflow: hidden; background: #fff; margin: 0 auto; }
+.phone iframe { width: 100%; height: 100%; border: 0; }
+.devlist { max-height: 160px; overflow: auto; font-size: 12.5px; border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; }
+.devlist div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+table { border-collapse: collapse; width: 100%; }
+th, td { border: 1px solid var(--line); padding: 4px 6px; text-align: left; vertical-align: top; font-size: 12.5px; }
+th { background: #eef2f5; }
+.modal { position: fixed; inset: 0; z-index: 20; background: rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; padding: 20px; }
+.modal .box { background: #fff; border-radius: 12px; padding: 16px 18px; width: min(900px, 100%); max-height: 90vh; overflow: auto; }
+.modal h2 { font-size: 16px; margin: 0 0 10px; }
+.ng { color: var(--ng); font-weight: 700; }
+.ok { color: var(--ok); font-weight: 700; }
+.warnbox { background: #fff7e6; border: 1px solid #f0c58f; border-radius: 8px; padding: 8px 10px; margin: 8px 0; }
+.errbox { background: #fdecea; border: 1px solid #f5b5ae; border-radius: 8px; padding: 8px 10px; margin: 8px 0; }
+.nav { display: flex; gap: 4px; }
+@media (max-width: 1250px) { .wrap { grid-template-columns: 280px 1fr; } .col.pv { grid-column: 1 / -1; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>検査アプリ 設定の編集</h1>
+  <span class="st" id="st">準備中…</span>
+  <span class="sp"></span>
+  <button class="ghost" data-act="classify">判定結果を確認</button>
+  <button class="ghost" data-act="reload">最新を読み込む</button>
+  <button class="pri" data-act="publish">本番に反映…</button>
+</header>
+<div class="wrap">
+  <div class="col" id="left"></div>
+  <div class="col" id="mid"></div>
+  <div class="col pv">
+    <div class="card">
+      <h2>プレビュー（iPhoneの画面）</h2>
+      <div class="row"><label>機器</label><select id="pvdev" style="flex:1;min-width:0"></select></div>
+      <div class="row"><label>画面</label>
+        <select id="pvmode"><option value="work">作業中（入力できる状態）</option><option value="todo">作業開始前</option></select>
+        <label><input type="checkbox" id="pvdetails"> 詳細を開く</label></div>
+      <p class="muted">編集中の設定で表示します。入力も試せますが、保存・送信はしません（試験結果には触れません）。</p>
+      <div class="phone"><iframe id="pv" src="index.html?preview" title="プレビュー"></iframe></div>
+    </div>
+  </div>
+</div>
+<script>
+'use strict';
+// ==== 検査アプリの設定（機器種類・表示する要素・手順画像のシリーズ）の編集画面 ====
+//   ・サーバーからは「一覧（読むだけ）」と「設定の履歴・保存・戻す」だけを使う。試験結果（機器のデータ）を変える操作は一切しない
+//   ・判定の計算とプレビューは、iPhoneアプリ（index.html?preview）そのものに任せる（アプリと同じ結果になる）
+//   ・編集中の内容（下書き）はこのPCのブラウザに保存する（kensa-editor.draft）。本番に反映するまで iPhone には届かない
+const $ = s => document.querySelector(s);
+const h = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const clone = o => JSON.parse(JSON.stringify(o));
+const MSG_TARGET = location.origin === 'null' ? '*' : location.origin;
+const ls = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* 保存できなくても編集は続けられる */ } },
+  del(k) { try { localStorage.removeItem(k); } catch (e) { /* 無視 */ } },
+};
+// 説明カタログの id のうち、表示を切り替えられる要素（それ以外は「常に出る要素」として表示する）
+const TOGGLE_ELS = ['date', 'temp', 'checks', 'serialHint', 'pv', 'clock', 'jst', 'deviation', 'result', 'tests', 'parts', 'replaced', 'missing', 'manual'];
+
+const S = {
+  conn: null, devices: [], names: [], published: null, curVer: 0,
+  defs: null, elements: [], about: '', draft: null, baseVer: 0,
+  tab: 'types', sel: 0, open: {}, classDraft: {}, classPub: {}, pass: '', loaded: false,
+};
+const effPublished = () => S.published || (S.defs && S.defs.defaults);
+const dirty = () => S.draft && effPublished() && JSON.stringify(strip(S.draft)) !== JSON.stringify(strip(effPublished()));
+const strip = c => { const x = clone(c); delete x.version; return x; };
+
+// ---- サーバー（読むだけ＋設定の保存）----
+function connInfo() {
+  // 編集画面で接続したもの（kensa-editor.conn）を優先し、無ければこのPCの iPhone アプリと同じ画面の接続（kensa.cfg。変更はしない）を使う
+  const b = ls.get('kensa-editor.conn', null);
+  const a = ls.get('kensa.cfg', null);
+  const c = (b && b.api && b.key) ? b : a;
+  return c && c.api && c.key ? { api: c.api, key: c.key, name: c.name || (b && b.name) || (a && a.name) || '' } : null;
+}
+async function api(action, body) {
+  const c = S.conn;
+  if (!c) throw new Error('サーバーに接続していません');
+  let res;
+  try { res = await fetch(c.api, { method: 'POST', body: JSON.stringify(Object.assign({ action, key: c.key, name: c.name || '編集画面' }, body || {})) }); }
+  catch (e) { throw Object.assign(new Error('通信できません'), { code: 'offline' }); }
+  const j = await res.json().catch(() => null);
+  if (!j) throw new Error('サーバーの応答が読めません');
+  if (!j.ok) throw Object.assign(new Error(j.error), { code: j.code });
+  return j;
+}
+function parseSetupCode(raw) {
+  const s = String(raw || '').replace(/[\s​-‍⁠　﻿]/g, '');
+  const m = s.match(/KENSA1[:：]([A-Za-z0-9_\-+/]+=*)/i);
+  if (!m) return s ? { api: s } : null;
+  try { const o = JSON.parse(atob(m[1].replace(/-/g, '+').replace(/_/g, '/'))); return { api: o.u, key: o.k || '' }; } catch (e) { return null; }
+}
+const normKey = v => String(v || '').replace(/[Ａ-Ｚａ-ｚ０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).replace(/[\s\-‐－ー―]/g, '').toLowerCase();
+
+async function loadServer() {
+  const j = await api('list');
+  S.devices = j.devices || [];
+  S.names = j.names || [];
+  S.published = j.config || null;
+  // 版の番号はサーバーの CONFIG_VER（configVer）を使う（古いサーバーは無いので設定の中の version）
+  S.curVer = j.configVer != null ? Number(j.configVer) || 0 : (j.config && j.config.version) || 0;
+}
+
+// ---- プレビュー（iPhone アプリをそのまま埋め込む）----
+const pv = () => $('#pv').contentWindow;
+let seq = 0;
+const waiters = {};
+window.addEventListener('message', e => {
+  if (e.origin !== location.origin || !e.data) return;
+  const m = e.data;
+  if (m.type === 'previewReady' && !S.defs) { S.defs = m; boot(); }
+  if (m.type === 'classified' && waiters[m.seq]) { waiters[m.seq](m.result); delete waiters[m.seq]; }
+});
+function classify(config) {
+  return new Promise(ok => { const n = ++seq; waiters[n] = r => ok(Object.fromEntries(r.map(x => [x.id, x]))); pv().postMessage({ type: 'classify', seq: n, config, devices: S.devices }, MSG_TARGET); });
+}
+let pvTimer = null;
+function updatePreview() {
+  clearTimeout(pvTimer);
+  pvTimer = setTimeout(() => {
+    const id = $('#pvdev').value;
+    const d = S.devices.find(x => x.id === id);
+    if (!d || !S.draft) return;
+    pv().postMessage({ type: 'preview', config: S.draft, device: d, names: S.names, mode: $('#pvmode').value, details: $('#pvdetails').checked }, MSG_TARGET);
+  }, 250);
+}
+async function reclassify() {
+  if (!S.devices.length || !S.draft) return;
+  S.classDraft = await classify(S.draft);
+  S.classPub = await classify(effPublished());
+  // シリーズの表は入力欄があるので作り直さない（入力中の文字が消えるため）。数だけ右の表で更新する。履歴は作り直さない（サーバーに聞き直さない）
+  if (S.tab === 'series') { renderMid(); checkImages(); }
+  else if (S.tab === 'types') { renderLeft(); renderMidLive(); }
+  renderPvDevices();
+}
+// 種類の設定の画面のうち、入力欄の無い部分（今の条件の文、当てはまる機器）だけを書き換える（入力中の欄は作り直さない）
+function renderMidLive() {
+  const t = S.draft && S.draft.types[S.sel];
+  if (!t) return;
+  const c = $('#m-cond');
+  if (c) c.textContent = `今の条件：様式が${t.base}で、${whenText(t)}`;
+  const box = $('#m-devs');
+  if (box) {
+    const devs = S.devices.filter(d => (S.classDraft[d.id] || {}).type === t.id);
+    $('#m-devn').textContent = devs.length;
+    box.innerHTML = devs.map(d => `<div>${h(d.tag)}　<span class="muted">${h(d.sheet)}　${h(d.info && d.info.model || '')}</span></div>`).join('') || '<span class="muted">なし</span>';
+  }
+}
+// iPhone アプリ（プレビュー）の準備ができたか、念のため聞く（準備完了の知らせを取りこぼした場合）
+$('#pv').addEventListener('load', () => { if (!S.defs) pv().postMessage({ type: 'hello' }, MSG_TARGET); });
+
+// ---- 起動 ----
+async function boot() {
+  try { const r = await fetch('elements.json', { cache: 'no-store' }); const j = await r.json(); S.elements = j.elements || []; S.about = j.about || ''; } catch (e) { S.elements = []; }
+  S.conn = S.conn || connInfo();
+  if (!S.conn) return renderConnect();
+  try { await loadServer(); } catch (e) { S.conn = null; return renderConnect(e.message); }
+  const saved = ls.get('kensa-editor.draft', null);
+  if (saved && saved.config && JSON.stringify(strip(saved.config)) !== JSON.stringify(strip(effPublished()))) {
+    const old = saved.baseVer !== S.curVer;
+    if (confirm(`このPCに保存した編集中の内容（${saved.savedAt || ''}）があります。続きから編集しますか？${old ? '\n\n※ この下書きを作った後に、本番の設定が変わっています（版 ' + saved.baseVer + ' → ' + S.curVer + '）。' : ''}\n\n「キャンセル」で破棄して、今の本番の設定から始めます。`)) {
+      S.draft = saved.config; S.baseVer = saved.baseVer;
+    }
+  }
+  if (!S.draft) { S.draft = clone(effPublished()); S.baseVer = S.curVer; ls.del('kensa-editor.draft'); }
+  S.loaded = true;
+  await reclassify();
+  renderAll();
+  updatePreview();
+}
+
+function renderConnect(err) {
+  $('#st').textContent = '未接続';
+  $('#left').innerHTML = `<div class="card"><h2>サーバーに接続</h2>
+    ${err ? `<div class="errbox">${h(err)}</div>` : ''}
+    <p class="muted">iPhone の初期設定と同じ「設定コード」と「合言葉」を入れてください（このPCのブラウザだけに保存します）。</p>
+    <div class="row"><label>設定コード</label></div><textarea id="c-code" rows="3" style="width:100%"></textarea>
+    <div class="row"><label>合言葉</label><input id="c-key" type="password" style="flex:1"></div>
+    <div class="row"><label>あなたの名前</label><input id="c-name" placeholder="例：高倉" style="flex:1"></div>
+    <button class="pri" data-act="connect">接続する</button></div>`;
+  $('#mid').innerHTML = '';
+}
+
+// ---- 表示 ----
+function renderAll() { renderHeader(); renderLeft(); renderMid(); renderPvDevices(); }
+function renderHeader() {
+  $('#st').innerHTML = `${h(S.conn.name || '')}　本番の設定：${S.curVer ? '版 ' + S.curVer : '初期値（版なし）'}　${dirty() ? '<b style="color:#ffd54f">● 編集中（未反映）</b>' : '変更なし'}${S.baseVer !== S.curVer ? '　<b style="color:#ffd54f">※ 下書きは古い版から</b>' : ''}`;
+}
+const baseOfType = t => t.base;
+const devCount = id => S.devices.filter(d => (S.classDraft[d.id] || {}).type === id).length;
+function condText(c) {
+  const f = (S.defs.condFields || {})[c.field] || c.field;
+  const vals = (c.values || []).filter(v => String(v).trim() !== '');
+  const q = vals.map(v => `「${v}」`).join('か');
+  switch (c.op) {
+    case 'contains': return `${f}に${q}を含む`;
+    case 'notContains': return `${f}に${q}を含まない`;
+    case 'startsWith': return `${f}が${q}で始まる`;
+    case 'digits': return `${f}が${vals.join('か')}桁の数字`;
+    case 'empty': return `${f}が空`;
+    case 'notEmpty': return `${f}が空でない`;
+  }
+  return '';
+}
+const whenText = t => (t.when || []).length ? (t.when || []).map(condText).filter(Boolean).join('、かつ ') : '（条件なし＝この様式の残りすべて）';
+
+function renderLeft() {
+  if (!S.loaded) return;
+  const tabs = `<div class="tabs"><button class="${S.tab === 'types' ? 'on' : ''}" data-act="tab" data-t="types">機器種類</button>
+    <button class="${S.tab === 'series' ? 'on' : ''}" data-act="tab" data-t="series">手順画像のシリーズ</button>
+    <button class="${S.tab === 'history' ? 'on' : ''}" data-act="tab" data-t="history">履歴</button></div>`;
+  const pubTypes = (effPublished() || {}).types || [];
+  const list = S.draft.types.map((t, i) => {
+    const p = pubTypes.find(x => x.id === t.id);
+    const ch = !p || JSON.stringify(p) !== JSON.stringify(t);
+    return `<div class="t ${i === S.sel ? 'on' : ''} ${ch ? 'changed' : ''}" data-act="sel" data-i="${i}">
+      <span class="cnt">${devCount(t.id)} 台</span><div class="nm"><span class="badge b-${h(t.base)}">${h(t.base)}</span>${i + 1}. ${h(t.name)}</div>
+      <div class="cond">${h(whenText(t))}</div></div>`;
+  }).join('');
+  const none = S.devices.filter(d => !(S.classDraft[d.id] || {}).type).length;
+  $('#left').innerHTML = `<div class="card">${tabs}
+    ${S.tab === 'types' ? `<p class="muted">上から順に調べ、最初に当てはまった種類になります。様式（計器・調節弁・タッチパネル）は報告書のシートの形で、登録のときに決まります。</p>
+      <div class="tlist">${list}</div>
+      ${none ? `<div class="errbox">どの種類にも当てはまらない機器が ${none} 台あります（標準の表示になります）。条件の無い種類を様式ごとに1つ置いてください。</div>` : ''}
+      <div class="row"><button data-act="addType">＋ 種類を追加</button><button data-act="dupType">複製</button>
+        <button data-act="upType">↑</button><button data-act="downType">↓</button><button class="del" data-act="delType">削除</button></div>
+      <p class="muted">黄色＝本番の設定から変えたもの</p>` : ''}
+    ${S.tab === 'series' ? seriesHtml() : ''}
+    ${S.tab === 'history' ? '<div id="hist"><p class="muted">読み込み中…</p></div>' : ''}</div>`;
+  if (S.tab === 'history') renderHistory();
+}
+
+function renderMid() {
+  if (!S.loaded) return;
+  if (S.tab === 'series') { $('#mid').innerHTML = seriesHelp(); return; }
+  if (S.tab === 'history') { $('#mid').innerHTML = `<div class="card"><h2>履歴について</h2><p class="muted">本番に反映するたびに新しい版として残ります。「この版に戻す」で、その版をすぐ本番にできます（iPhone は次に一覧を更新したときに切り替わります）。「編集に読み込む」は下書きに読み込むだけで、本番は変わりません。</p></div>`; return; }
+  const t = S.draft.types[S.sel];
+  if (!t) { $('#mid').innerHTML = ''; return; }
+  const D = S.defs;
+  const base = t.base;
+  const fields = Object.entries(D.condFields);
+  const ops = Object.entries(D.condOps);
+  const conds = (t.when || []).map((c, ci) => `<div class="cond-row">
+      <select data-cf="${ci}" data-k="field">${fields.map(([k, v]) => `<option value="${k}" ${c.field === k ? 'selected' : ''}>${h(v)}</option>`).join('')}</select>
+      <select data-cf="${ci}" data-k="op">${ops.map(([k, v]) => `<option value="${k}" ${c.op === k ? 'selected' : ''}>${h(v)}</option>`).join('')}</select>
+      <input data-cf="${ci}" data-k="values" value="${h((c.values || []).join('、'))}" placeholder="${c.op === 'digits' ? '例：9' : c.op === 'startsWith' ? '例：C、GP4###（#＝数字）' : '例：記録計（、で区切ると「どれか」）'}" ${['empty', 'notEmpty'].includes(c.op) ? 'disabled' : ''}>
+      <button class="small del" data-act="delCond" data-ci="${ci}">×</button></div>`).join('');
+  const devs = S.devices.filter(d => (S.classDraft[d.id] || {}).type === t.id);
+  const defs = D.showDef.filter(x => x.bases.includes(base));
+  const val = k => { const d = defs.find(x => x.key === k); const v = (t.show || {})[k]; return v == null ? d.def : !!v; };
+  const pubT = ((effPublished() || {}).types || []).find(x => x.id === t.id);
+  const pubVal = k => { if (!pubT) return null; const d = defs.find(x => x.key === k); const v = (pubT.show || {})[k]; return v == null ? d.def : !!v; };
+  const elRows = defs.map(x => {
+    const on = val(x.key);
+    const parentOff = x.parent && !val(x.parent);
+    const changed = pubT && pubVal(x.key) !== on;
+    return `<div class="el ${x.parent ? 'child' : ''} ${changed ? 'changed' : ''}">
+      <div class="lb ${parentOff ? 'off' : ''}"><input type="checkbox" data-show="${x.key}" ${on ? 'checked' : ''}>
+        <span>${h(x.label)}${parentOff ? '（上の要素が非表示のため出ません）' : ''}</span>
+        <button class="q" data-act="info" data-k="${x.key}">説明</button></div>
+      ${S.open[x.key] ? elInfo(x.el, base) : ''}</div>`;
+  }).join('');
+  const procs = Object.entries(D.procs).filter(([k]) => base !== '調節弁' && (k !== 'brightness' || base === 'タッチパネル') && (k !== 'bias' || base === '計器'));
+  const fixed = S.elements.filter(e => (e.kinds || []).includes(base) && !TOGGLE_ELS.includes(e.id));
+  $('#mid').innerHTML = `<div class="card">
+    <h2>機器種類の設定</h2>
+    <div class="row"><label>名前</label><input id="t-name" value="${h(t.name)}" style="flex:1"></div>
+    <div class="row"><label>様式</label><select id="t-base">${D.kinds.map(k => `<option ${k === base ? 'selected' : ''}>${h(k)}</option>`).join('')}</select>
+      <span class="muted">報告書のシートの形（読む・書くセルの位置）。様式を変えると、出せる要素も変わります。</span></div>
+    <h3>判定の条件 <span class="muted">（すべて満たすときこの種類。1つの欄に「、」で複数書くと「どれか」）</span></h3>
+    <div class="muted" id="m-cond" style="margin-bottom:4px">今の条件：様式が${h(base)}で、${h(whenText(t))}</div>
+    ${conds}
+    <button class="small" data-act="addCond">＋ 条件を追加</button>
+    <h3>当てはまる機器（<span id="m-devn">${devs.length}</span> 台）</h3>
+    <div class="devlist" id="m-devs">${devs.map(d => `<div>${h(d.tag)}　<span class="muted">${h(d.sheet)}　${h(d.info && d.info.model || '')}</span></div>`).join('') || '<span class="muted">なし</span>'}</div>
+    <h3>表示する要素 <span class="muted">（チェックを外すと iPhone の画面に出しません。「説明」で読み取り元・反映先・Excel化の動きを確認できます）</span></h3>
+    ${elRows}
+    <h3>手順ボタン（修正手順・確認手順） <button class="q" data-act="info" data-k="fixed:manual">説明</button></h3>
+    ${S.open['fixed:manual'] ? `<div class="el">${elInfo('manual', base)}</div>` : ''}
+    ${procs.length ? procs.map(([k, v]) => `<label style="margin-right:14px"><input type="checkbox" data-proc="${k}" ${(t.manual || []).includes(k) ? 'checked' : ''}> ${h(v)}</label>`).join('') : '<span class="muted">この様式には手順ボタンがありません</span>'}
+    <p class="muted">画像は型番のシリーズごと（「手順画像のシリーズ」のタブ）。時刻合わせだけなら押すとすぐ表示、それ以外は手順を選んでから表示します。</p>
+    <h3>常に出る要素（この様式では切り替えられません）</h3>
+    ${fixed.map(e => `<div class="el"><div class="lb"><span>・${h(e.name)}</span><button class="q" data-act="info" data-k="fixed:${e.id}">説明</button></div>${S.open['fixed:' + e.id] ? elInfo(e.id, base) : ''}</div>`).join('')}
+  </div>`;
+}
+
+// 要素の説明（elements.json）。読み取り元は様式に合うものだけ
+function elInfo(id, base) {
+  const e = S.elements.find(x => x.id === id);
+  if (!e) return '<div class="info"><div>説明</div><div>（説明がありません）</div></div>';
+  const lbl = { when: '表示の条件', read: '読み取り元', app: 'iPhoneでの動き', note: '記事への反映', excel: 'Excel化の動き' };
+  const v = k => {
+    const x = e[k];
+    if (x == null) return '';
+    if (typeof x === 'string') return h(x);
+    return Object.entries(x).filter(([kk]) => kk === '*' || kk === base).map(([kk, vv]) => (kk === '*' ? '' : `<b>${h(kk)}</b>：`) + h(vv)).join('<br>');
+  };
+  return `<div class="info"><div>要素</div><div><b>${h(e.name)}</b></div>${Object.keys(lbl).map(k => v(k) ? `<div>${lbl[k]}</div><div>${v(k)}</div>` : '').join('')}</div>`;
+}
+
+// ---- 手順画像のシリーズ ----
+function seriesHtml() {
+  const list = S.draft.series || [];
+  return `<p class="muted">型番の先頭でシリーズを決め、手順の画像（GitHub の web/manual/<キー>-<手順>.png）を出します。# は数字1文字。上から順に、最初に当てはまったシリーズです。</p>
+    <table><tr><th>名前</th><th>キー</th><th>型番の先頭（、区切り）</th><th></th></tr>
+    ${list.map((s, i) => `<tr><td><input data-sf="${i}" data-k="name" value="${h(s.name)}" style="width:100%"></td>
+      <td><input data-sf="${i}" data-k="key" value="${h(s.key)}" style="width:90px"></td>
+      <td><input data-sf="${i}" data-k="prefixes" value="${h((s.prefixes || []).join('、'))}" style="width:100%"></td>
+      <td class="nav"><button class="small" data-act="upSeries" data-i="${i}">↑</button><button class="small del" data-act="delSeries" data-i="${i}">×</button></td></tr>`).join('')}
+    </table><button class="small" data-act="addSeries" style="margin-top:6px">＋ シリーズを追加</button>`;
+}
+function seriesHelp() {
+  const list = S.draft.series || [];
+  const procs = S.defs.procs;
+  const use = key => S.devices.filter(d => ((S.classDraft[d.id] || {}).series || []).includes(key)).length;
+  return `<div class="card"><h2>シリーズごとの画像と当てはまる機器</h2>
+    <table><tr><th>シリーズ</th><th>当てはまる機器（台）</th>${Object.values(procs).map(p => `<th>${h(p)}</th>`).join('')}</tr>
+    ${list.map(s => `<tr><td>${h(s.name)}<div class="muted">${h(s.key)}</div></td><td>${use(s.key)}</td>
+      ${Object.keys(procs).map(p => `<td data-img="${h(s.key)}-${p}" class="muted">確認中…</td>`).join('')}</tr>`).join('')}</table>
+    <p class="muted">○＝画像あり（GitHub に上げた web/manual の中）。画像を足すときは「キー-clock.png」「キー-brightness.png」「キー-bias.png」の名前で置きます（2枚目以降は -2.png …）。</p></div>`;
+}
+function checkImages() {
+  document.querySelectorAll('[data-img]').forEach(td => {
+    const base = td.dataset.img;
+    const tryLoad = ext => new Promise(ok => { const im = new Image(); im.onload = () => ok(true); im.onerror = () => ok(false); im.src = `manual/${base}.${ext}`; });
+    tryLoad('png').then(a => a || tryLoad('jpg')).then(ok => { td.innerHTML = ok ? '<span class="ok">○</span>' : '―'; });
+  });
+}
+
+// ---- 履歴 ----
+async function renderHistory() {
+  const el = $('#hist');
+  if (!S.pass && !(await askPass())) { el.innerHTML = '<p class="muted">履歴を見るにはパスワードが必要です。</p>'; return; }
+  try {
+    const j = await api('configHistory', { pass: S.pass });
+    el.innerHTML = `<table><tr><th>版</th><th>日時・人・メモ</th><th></th></tr>
+      <tr><td>初期値</td><td class="muted">アプリに入っている元の設定</td><td><button class="small" data-act="loadVer" data-v="0">編集に読み込む</button>
+        ${j.current ? '<button class="small" data-act="pubVer" data-v="0">この版に戻す</button>' : '<b>使用中</b>'}</td></tr>
+      ${j.history.map(r => `<tr><td>${r.ver}</td><td>${h(r.at.slice(0, 16))}　${h(r.by)}<div class="muted">${h(r.note)}</div></td>
+        <td><button class="small" data-act="loadVer" data-v="${r.ver}">編集に読み込む</button>
+        ${r.ver === j.current ? '<b>使用中</b>' : `<button class="small" data-act="pubVer" data-v="${r.ver}">この版に戻す</button>`}</td></tr>`).join('')}</table>`;
+    S.history = j.history;
+  } catch (e) {
+    if (e.code === 'badpass') S.pass = '';
+    el.innerHTML = `<div class="errbox">${h(e.message)}</div>`;
+  }
+}
+async function askPass() {
+  const p = prompt('設定の編集のパスワードを入れてください（データ初期化と同じパスワード）');
+  if (!p) return false;
+  try { await api('configHistory', { pass: p, check: true }); S.pass = p; return true; }
+  catch (e) { alert(e.message); return false; }
+}
+
+// ---- 判定結果・反映前の確認 ----
+function impact() {
+  const rows = S.devices.map(d => {
+    const a = S.classPub[d.id] || {}; const b = S.classDraft[d.id] || {};
+    return { d, from: a.typeName || '（なし）', to: b.typeName || '（当てはまる種類なし）', changed: (a.type || '') !== (b.type || ''), none: !b.type };
+  });
+  const pubTypes = (effPublished() || {}).types || [];
+  const typeChanges = S.draft.types.map(t => {
+    const p = pubTypes.find(x => x.id === t.id);
+    if (!p) return `新しい種類「${t.name}」`;
+    const diffs = [];
+    if (p.name !== t.name) diffs.push(`名前「${p.name}」→「${t.name}」`);
+    if (p.base !== t.base) diffs.push(`様式 ${p.base}→${t.base}`);
+    if (JSON.stringify(p.when || []) !== JSON.stringify(t.when || [])) diffs.push('判定の条件');
+    S.defs.showDef.filter(x => x.bases.includes(t.base)).forEach(x => {
+      const pv = (p.show || {})[x.key]; const tv = (t.show || {})[x.key];
+      const a = pv == null ? x.def : !!pv; const b = tv == null ? x.def : !!tv;
+      if (a !== b) diffs.push(`${x.label}：${a ? '出す' : '出さない'}→${b ? '出す' : '出さない'}`);
+    });
+    if (JSON.stringify(p.manual || []) !== JSON.stringify(t.manual || [])) diffs.push('手順ボタン');
+    return diffs.length ? `「${t.name}」：${diffs.join('、')}` : '';
+  }).filter(Boolean);
+  pubTypes.filter(p => !S.draft.types.some(t => t.id === p.id)).forEach(p => typeChanges.push(`種類「${p.name}」を削除`));
+  if (JSON.stringify((effPublished() || {}).series || []) !== JSON.stringify(S.draft.series || [])) typeChanges.push('手順画像のシリーズ');
+  const pubOrder = pubTypes.map(t => t.id).filter(id => S.draft.types.some(t => t.id === id));
+  const draftOrder = S.draft.types.map(t => t.id).filter(id => pubTypes.some(t => t.id === id));
+  if (JSON.stringify(pubOrder) !== JSON.stringify(draftOrder)) typeChanges.push('種類の並び順');
+  return { rows, typeChanges };
+}
+function validate() {
+  const errs = [];
+  if (!S.draft.types.length) errs.push('機器種類が1つもありません');
+  const ids = new Set();
+  S.draft.types.forEach((t, i) => {
+    if (!String(t.name || '').trim()) errs.push(`${i + 1} 番目の種類に名前がありません`);
+    if (ids.has(t.id)) errs.push(`種類の id が重複しています（${t.id}）`);
+    ids.add(t.id);
+    (t.when || []).forEach(c => { if (!['empty', 'notEmpty'].includes(c.op) && !(c.values || []).some(v => String(v).trim())) errs.push(`「${t.name}」に値の入っていない条件があります`); if (c.op === 'digits' && (c.values || []).some(v => !/^[0-9]+$/.test(String(v).trim()))) errs.push(`「${t.name}」の桁数は数字で入れてください`); });
+  });
+  const keys = new Set();
+  (S.draft.series || []).forEach((s, i) => {
+    if (!/^[a-z0-9_-]+$/.test(s.key || '')) errs.push(`シリーズ ${i + 1} 番目のキーは半角の小文字・数字・ - _ にしてください（画像の名前になります）`);
+    if (keys.has(s.key)) errs.push(`シリーズのキーが重複しています（${s.key}）`);
+    keys.add(s.key);
+  });
+  return errs;
+}
+function showClassify(publishMode) {
+  const { rows, typeChanges } = impact();
+  const changed = rows.filter(r => r.changed);
+  const none = rows.filter(r => r.none);
+  const work = S.devices.filter(d => d.status === '作業中');
+  const errs = validate();
+  const counts = S.draft.types.map(t => `${h(t.name)} <b>${rows.filter(r => (S.classDraft[r.d.id] || {}).type === t.id).length}</b> 台`).join('　／　');
+  const el = document.createElement('div');
+  el.className = 'modal';
+  el.innerHTML = `<div class="box"><h2>${publishMode ? '本番に反映する前の確認' : '判定結果（編集中の設定）'}</h2>
+    ${errs.length ? `<div class="errbox"><b>直してください</b><br>${errs.map(h).join('<br>')}</div>` : ''}
+    <p>${counts}</p>
+    ${typeChanges.length ? `<div class="warnbox"><b>本番からの変更</b><br>${typeChanges.map(h).join('<br>')}</div>` : '<p class="muted">本番の設定からの変更はありません。</p>'}
+    ${changed.length ? `<div class="warnbox"><b>種類が変わる機器 ${changed.length} 台</b></div>` : '<p class="muted">種類が変わる機器はありません。</p>'}
+    ${none.length ? `<div class="errbox">どの種類にも当てはまらない機器が ${none.length} 台あります（標準の表示になります）。</div>` : ''}
+    ${publishMode && work.length ? `<div class="warnbox">今、作業中の機器が ${work.length} 台あります。反映後、その人が一覧を更新して機器を開き直すと新しい表示になります（入力済みの値は消えません）。</div>` : ''}
+    ${publishMode ? `<div class="card" style="margin:10px 0"><b>本番に反映</b>
+      <p class="muted" style="margin:4px 0">反映すると、iPhone は次に一覧を更新したときから新しい設定になります。試験結果（入力済みのデータ）は変わりません。いつでも「履歴」から前の版に戻せます。</p>
+      <div class="row"><label>変更のメモ</label><input id="p-note" style="flex:1" placeholder="例：記録計に PV を出さない"></div>
+      <div class="row"><label>パスワード</label><input id="p-pass" type="password" value="${h(S.pass)}">
+        <span class="sp" style="flex:1"></span><button class="pri" id="p-go" ${errs.length || !dirty() ? 'disabled' : ''}>本番に反映する</button></div></div>` : ''}
+    <div class="row" style="justify-content:flex-end;margin:6px 0"><button id="p-close">閉じる</button></div>
+    <table><tr><th>機器</th><th>シート</th><th>本番の種類</th><th>編集後の種類</th></tr>
+      ${rows.sort((a, b) => (b.changed - a.changed) || (b.none - a.none)).map(r => `<tr class="${r.changed ? 'changed' : ''}"><td>${h(r.d.tag)}</td><td>${h(r.d.sheet)}</td><td>${h(r.from)}</td><td>${r.none ? '<span class="ng">' + h(r.to) + '</span>' : h(r.to)}</td></tr>`).join('')}</table></div>`;
+  document.body.appendChild(el);
+  el.querySelector('#p-close').onclick = () => el.remove();
+  const go = el.querySelector('#p-go');
+  if (go) go.onclick = async () => {
+    const pass = el.querySelector('#p-pass').value;
+    const note = el.querySelector('#p-note').value.trim();
+    if (!note && !confirm('変更のメモが空です。このまま反映しますか？')) return;
+    go.disabled = true; go.textContent = '反映しています…';
+    try {
+      const j = await api('saveConfig', { pass, config: S.draft, note, baseVer: S.baseVer });
+      S.pass = pass;
+      alert(`本番に反映しました（版 ${j.ver}）。`);
+      el.remove();
+      await reloadAll(true);
+    } catch (e) {
+      go.disabled = false; go.textContent = '本番に反映する';
+      if (e.code === 'configconflict') {
+        // 自分の編集中の内容は残したまま、比べる相手（本番）だけ最新にする。黄色＝最新の本番との違いになるので、見直してから反映し直す
+        if (confirm(e.message + '\n\n自分の編集中の内容は残したまま、最新の本番の設定と比べ直しますか？\n（黄色の箇所＝最新の本番との違いです。ほかの人が変えた部分を元に戻してしまう違いも含まれるので、確認してから反映し直してください）')) {
+          el.remove();
+          try { await loadServer(); S.baseVer = S.curVer; saveDraft(); await reclassify(); renderAll(); updatePreview(); showClassify(false); }
+          catch (err) { alert(err.message); }
+        }
+      } else alert(e.message);
+    }
+  };
+}
+
+// ---- 操作 ----
+function saveDraft() {
+  if (!S.draft) return;
+  if (dirty()) ls.set('kensa-editor.draft', { config: S.draft, baseVer: S.baseVer, savedAt: new Date().toLocaleString('ja-JP') });
+  else ls.del('kensa-editor.draft');
+  renderHeader();
+}
+let reTimer = null;
+function changed(full) {
+  saveDraft();
+  clearTimeout(reTimer);
+  reTimer = setTimeout(async () => { await reclassify(); if (full) renderMid(); }, 200);
+  updatePreview();
+}
+async function reloadAll(discard) {
+  if (!discard && dirty() && !confirm('編集中の内容を捨てて、本番の設定を読み込みます。よろしいですか？')) return;
+  await loadServer();
+  S.draft = clone(effPublished()); S.baseVer = S.curVer;
+  ls.del('kensa-editor.draft');
+  S.sel = Math.min(S.sel, S.draft.types.length - 1);
+  await reclassify();
+  renderAll(); updatePreview();
+}
+function renderPvDevices() {
+  const sel = $('#pvdev');
+  const t = S.draft && S.draft.types[S.sel];
+  if (!t) return;
+  const mine = S.devices.filter(d => (S.classDraft[d.id] || {}).type === t.id);
+  const pool = mine.length ? mine : S.devices.filter(d => d.kind === t.base);
+  const cur = sel.value;
+  sel.innerHTML = pool.map(d => `<option value="${h(d.id)}">${h(d.tag)}（${h(d.sheet)}）</option>`).join('') ||
+    '<option value="">（この種類に当てはまる機器がありません）</option>';
+  if (pool.some(d => d.id === cur)) sel.value = cur;
+  if (!mine.length && pool.length) sel.insertAdjacentHTML('afterbegin', '<option disabled>― 当てはまる機器が無いので、同じ様式の機器を表示 ―</option>');
+}
+const newId = () => 't' + Date.now().toString(36);
+
+document.addEventListener('click', async e => {
+  const b = e.target.closest('[data-act]');
+  if (!b) return;
+  const act = b.dataset.act;
+  const T = S.draft && S.draft.types;
+  if (act === 'connect') {
+    const p = parseSetupCode($('#c-code').value);
+    const key = normKey($('#c-key').value) || normKey((p && p.key) || '');  // 設定コードに合言葉が入っていれば、合言葉の欄は空でもよい
+    const name = $('#c-name').value.trim();
+    if (!p || !p.api || !key) { alert('設定コードと合言葉を入れてください'); return; }
+    S.conn = { api: p.api, key, name };
+    try { await loadServer(); } catch (err) { S.conn = null; alert(err.message); return; }
+    ls.set('kensa-editor.conn', S.conn);
+    boot();
+  }
+  else if (act === 'tab') { S.tab = b.dataset.t; renderLeft(); renderMid(); if (S.tab === 'series') checkImages(); }
+  else if (act === 'sel') { S.sel = +b.dataset.i; renderLeft(); renderMid(); renderPvDevices(); updatePreview(); }
+  else if (act === 'info') { S.open[b.dataset.k] = !S.open[b.dataset.k]; renderMid(); }
+  else if (act === 'addType') {
+    const base = T[S.sel] ? T[S.sel].base : '計器';
+    T.splice(S.sel, 0, { id: newId(), name: '新しい種類', base, when: [{ field: 'name', op: 'contains', values: [''] }], show: {}, manual: [] });
+    renderLeft(); renderMid(); changed();
+  }
+  else if (act === 'dupType' && T[S.sel]) {
+    // コピーは元の種類のすぐ下に入れる（上に入れると元の種類に当てはまる機器を全部取ってしまうため）
+    const c = clone(T[S.sel]); c.id = newId(); c.name += '（コピー）';
+    T.splice(S.sel + 1, 0, c); S.sel++; renderLeft(); renderMid(); changed();
+  }
+  else if (act === 'delType' && T[S.sel]) {
+    const n = devCount(T[S.sel].id);
+    if (!confirm(`種類「${T[S.sel].name}」を削除します。${n ? `\n当てはまっている ${n} 台は、下の種類で判定し直されます。` : ''}`)) return;
+    T.splice(S.sel, 1); S.sel = Math.max(0, Math.min(S.sel, T.length - 1)); renderLeft(); renderMid(); changed(true);
+  }
+  else if ((act === 'upType' || act === 'downType') && T[S.sel]) {
+    const j = act === 'upType' ? S.sel - 1 : S.sel + 1;
+    if (j < 0 || j >= T.length) return;
+    [T[S.sel], T[j]] = [T[j], T[S.sel]]; S.sel = j; renderLeft(); changed(true);
+  }
+  else if (act === 'addCond') { (T[S.sel].when = T[S.sel].when || []).push({ field: 'name', op: 'contains', values: [] }); renderMid(); changed(); }
+  else if (act === 'delCond') { T[S.sel].when.splice(+b.dataset.ci, 1); renderMid(); changed(true); }
+  else if (act === 'addSeries') { (S.draft.series = S.draft.series || []).push({ key: 'new' + (S.draft.series.length + 1), name: '新しいシリーズ', prefixes: [] }); renderLeft(); renderMid(); checkImages(); changed(); }
+  else if (act === 'delSeries') { S.draft.series.splice(+b.dataset.i, 1); renderLeft(); renderMid(); checkImages(); changed(); }
+  else if (act === 'upSeries') { const i = +b.dataset.i; if (i > 0) { const s = S.draft.series; [s[i - 1], s[i]] = [s[i], s[i - 1]]; renderLeft(); renderMid(); checkImages(); changed(); } }
+  else if (act === 'classify') { if (S.loaded) { await reclassify(); showClassify(false); } }
+  else if (act === 'publish') { if (S.loaded) { await reclassify(); showClassify(true); } }
+  else if (act === 'reload') { if (S.loaded) await reloadAll(false); }
+  else if (act === 'loadVer') {
+    const v = +b.dataset.v;
+    const c = v ? ((S.history || []).find(r => r.ver === v) || {}).config : S.defs.defaults;
+    if (!c) return;
+    if (dirty() && !confirm('編集中の内容を捨てて、この版を編集に読み込みます。よろしいですか？（本番は変わりません）')) return;
+    S.draft = clone(c); S.baseVer = S.curVer; S.sel = 0; S.tab = 'types'; changed(); renderAll();
+  }
+  else if (act === 'pubVer') {
+    const v = +b.dataset.v;
+    if (!confirm(`${v ? '版 ' + v : '初期値'} を本番の設定にします。iPhone は次に一覧を更新したときから切り替わります。よろしいですか？${dirty() ? '\n\n※ 編集中でまだ反映していない内容は消えます（必要なら先に「本番に反映」してください）。' : ''}`)) return;
+    try { await api('publishConfig', { pass: S.pass, ver: v }); alert('戻しました。'); await reloadAll(true); S.tab = 'history'; renderLeft(); renderMid(); }
+    catch (err) { alert(err.message); }
+  }
+});
+
+document.addEventListener('input', e => {
+  const t = e.target;
+  // シリーズの欄は種類が無くても編集できるように先に扱う
+  if (t.dataset.sf != null && S.draft) {
+    const s = S.draft.series[+t.dataset.sf];
+    if (t.dataset.k === 'prefixes') s.prefixes = t.value.split(/[、,，]/).map(x => x.trim()).filter(Boolean);
+    else s[t.dataset.k] = t.dataset.k === 'key' ? t.value.trim() : t.value;
+    changed();
+    return;
+  }
+  const T = S.draft && S.draft.types[S.sel];
+  if (!T) return;
+  if (t.id === 't-name') { T.name = t.value; changed(); renderLeftSoon(); }
+  else if (t.dataset.cf != null && t.dataset.k === 'values') {
+    T.when[+t.dataset.cf].values = t.value.split(/[、,，]/).map(s => s.trim()).filter(Boolean);
+    changed(); renderLeftSoon();
+  }
+});
+document.addEventListener('change', e => {
+  const t = e.target;
+  const T = S.draft && S.draft.types[S.sel];
+  if (t.id === 'pvdev' || t.id === 'pvmode' || t.id === 'pvdetails') { updatePreview(); return; }
+  if (!T) return;
+  if (t.id === 't-base') {
+    if (!confirm('様式を変えると、この種類に当てはまる機器や出せる要素が変わります。よろしいですか？')) { t.value = T.base; return; }
+    T.base = t.value; renderMid(); changed(true);
+  }
+  else if (t.dataset.cf != null && (t.dataset.k === 'field' || t.dataset.k === 'op')) {
+    T.when[+t.dataset.cf][t.dataset.k] = t.value;
+    if (t.dataset.k === 'op' && ['empty', 'notEmpty'].includes(t.value)) T.when[+t.dataset.cf].values = [];
+    renderMid(); changed(true);
+  }
+  else if (t.dataset.show) { (T.show = T.show || {})[t.dataset.show] = t.checked; renderMid(); changed(); }
+  else if (t.dataset.proc) {
+    const set = new Set(T.manual || []);
+    if (t.checked) set.add(t.dataset.proc); else set.delete(t.dataset.proc);
+    // 並びは 輝度調整 → 時刻合わせ → PVフィルタ・バイアス
+    T.manual = Object.keys(S.defs.procs).filter(k => set.has(k));
+    changed();
+  }
+});
+let leftTimer = null;
+const renderLeftSoon = () => { clearTimeout(leftTimer); leftTimer = setTimeout(renderLeft, 400); };
+window.addEventListener('beforeunload', e => { if (dirty()) { saveDraft(); } });
+</script>
+</body>
+</html>
