@@ -107,12 +107,27 @@ const ls = {
   del(k) { try { localStorage.removeItem(k); } catch (e) { /* 無視 */ } },
 };
 // 説明カタログの id のうち、表示を切り替えられる要素（それ以外は「常に出る要素」として表示する）
-const TOGGLE_ELS = ['date', 'temp', 'checks', 'serialHint', 'pv', 'clock', 'jst', 'deviation', 'result', 'tests', 'parts', 'replaced', 'missing', 'manual'];
+const TOGGLE_ELS = ['date', 'temp', 'checks', 'serialHint', 'pv', 'clock', 'jst', 'deviation', 'result', 'tests', 'parts', 'replaced', 'missing', 'manual', 'customs'];
+
+// ---- アプリ（pc\template-*.ps1）が Excel に書き込むセル。追加した要素の書き込み先が重なったら警告する ----
+//   template-keiki.ps1 / template-valve.ps1 / template-touch.ps1 を変えたらここも合わせること。タッチパネルはずれ0の様式の番地
+const rng = (cols, from, to, step = 1) => { const o = []; cols.forEach(c => { for (let r = from; r <= to; r += step) o.push(c + r); }); return o; };
+const BUILTIN_CELLS = {
+  '計器': ['X2', 'W6', 'X4', 'D4', 'D5', 'D6', 'AS31', 'AZ7', 'AZ10', 'AE23', 'AE30', ...rng(['F', 'W'], 18, 22), ...rng(['N', 'AI'], 18, 21), ...rng(['F', 'W'], 25, 29), ...rng(['N', 'AI'], 25, 28),
+    ...rng(['B'], 35, 62, 3), ...rng(['U', 'AG', 'AJ', 'AL', 'AT'], 35, 53, 2), 'U59', 'W59', 'AE59', 'AI59', 'AS59'],
+  '調節弁': ['X2', 'D4', 'D5', 'D6', 'D7', 'AZ7', 'AE23', 'AI23', ...rng(['F', 'W'], 18, 22), ...rng(['N', 'AI'], 18, 21), ...rng(['F', 'N', 'W'], 25, 31),
+    ...rng(['B'], 35, 62, 3), ...rng(['AE', 'AT'], 35, 51, 2), 'U59', 'W59', 'AE59', 'AI59', 'AS59'],
+  'タッチパネル': ['W2', 'W4', ...[5, 15, 25, 35, 45].flatMap(r => [`D${r + 1}`, `D${r + 2}`, `D${r + 3}`, `F${r + 5}`, `F${r + 6}`, `F${r + 7}`, `F${r + 8}`]),
+    ...rng(['B'], 56, 74, 3), 'U71', 'W71', 'AD71', 'AH71', 'AR71'],
+};
+// セル番地の形（Excel の上限：列 XFD＝16384、行 1048576）
+const CELL_RE = { test: s => { const m = /^([A-Z]{1,3})([1-9][0-9]{0,6})$/.exec(s); if (!m) return false; const col = [...m[1]].reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0); return col <= 16384 && +m[2] <= 1048576; } };
+const normCell = s => String(s || '').normalize('NFKC').trim().toUpperCase();
 
 const S = {
   conn: null, devices: [], names: [], published: null, curVer: 0,
   defs: null, elements: [], about: '', draft: null, baseVer: 0,
-  tab: 'types', sel: 0, open: {}, classDraft: {}, classPub: {}, pass: '', loaded: false,
+  tab: 'types', sel: 0, csel: 0, open: {}, classDraft: {}, classPub: {}, pass: '', loaded: false,
 };
 const effPublished = () => S.published || (S.defs && S.defs.defaults);
 const dirty = () => S.draft && effPublished() && JSON.stringify(strip(S.draft)) !== JSON.stringify(strip(effPublished()));
@@ -260,6 +275,7 @@ const whenText = t => (t.when || []).length ? (t.when || []).map(condText).filte
 function renderLeft() {
   if (!S.loaded) return;
   const tabs = `<div class="tabs"><button class="${S.tab === 'types' ? 'on' : ''}" data-act="tab" data-t="types">機器種類</button>
+    <button class="${S.tab === 'customs' ? 'on' : ''}" data-act="tab" data-t="customs">追加した要素</button>
     <button class="${S.tab === 'series' ? 'on' : ''}" data-act="tab" data-t="series">手順画像のシリーズ</button>
     <button class="${S.tab === 'history' ? 'on' : ''}" data-act="tab" data-t="history">履歴</button></div>`;
   const pubTypes = (effPublished() || {}).types || [];
@@ -278,6 +294,7 @@ function renderLeft() {
       <div class="row"><button data-act="addType">＋ 種類を追加</button><button data-act="dupType">複製</button>
         <button data-act="upType">↑</button><button data-act="downType">↓</button><button class="del" data-act="delType">削除</button></div>
       <p class="muted">黄色＝本番の設定から変えたもの</p>` : ''}
+    ${S.tab === 'customs' ? customsListHtml() : ''}
     ${S.tab === 'series' ? seriesHtml() : ''}
     ${S.tab === 'history' ? '<div id="hist"><p class="muted">読み込み中…</p></div>' : ''}</div>`;
   if (S.tab === 'history') renderHistory();
@@ -286,6 +303,7 @@ function renderLeft() {
 function renderMid() {
   if (!S.loaded) return;
   if (S.tab === 'series') { $('#mid').innerHTML = seriesHelp(); return; }
+  if (S.tab === 'customs') { $('#mid').innerHTML = customMidHtml(); return; }
   if (S.tab === 'history') { $('#mid').innerHTML = `<div class="card"><h2>履歴について</h2><p class="muted">本番に反映するたびに新しい版として残ります。「この版に戻す」で、その版をすぐ本番にできます（iPhone は次に一覧を更新したときに切り替わります）。「編集に読み込む」は下書きに読み込むだけで、本番は変わりません。</p></div>`; return; }
   const t = S.draft.types[S.sel];
   if (!t) { $('#mid').innerHTML = ''; return; }
@@ -313,6 +331,15 @@ function renderMid() {
         <button class="q" data-act="info" data-k="${x.key}">説明</button></div>
       ${S.open[x.key] ? elInfo(x.el, base) : ''}</div>`;
   }).join('');
+  // 追加した要素（この様式のもの）も、種類ごとに出す／出さないを選べる
+  const customs = (S.draft.customs || []).filter(c => c.base === base);
+  const cval = c => { const v = (t.show || {})['c:' + c.id]; return v == null ? c.def !== false : !!v; };
+  const cRows = customs.map(c => {
+    const pc = pubT && ((effPublished() || {}).customs || []).some(x => x.id === c.id) ? (v => v == null ? c.def !== false : !!v)((pubT.show || {})['c:' + c.id]) : null;
+    return `<div class="el ${pc != null && pc !== cval(c) ? 'changed' : ''}"><div class="lb"><input type="checkbox" data-show="c:${h(c.id)}" ${cval(c) ? 'checked' : ''}>
+      <span>【追加】${h(c.label || '（名前なし）')}</span><button class="q" data-act="info" data-k="c:${h(c.id)}">説明</button></div>
+      ${S.open['c:' + c.id] ? customInfo(c) : ''}</div>`;
+  }).join('');
   const procs = Object.entries(D.procs).filter(([k]) => base !== '調節弁' && (k !== 'brightness' || base === 'タッチパネル') && (k !== 'bias' || base === '計器'));
   const fixed = S.elements.filter(e => (e.kinds || []).includes(base) && !TOGGLE_ELS.includes(e.id));
   $('#mid').innerHTML = `<div class="card">
@@ -328,6 +355,7 @@ function renderMid() {
     <div class="devlist" id="m-devs">${devs.map(d => `<div>${h(d.tag)}　<span class="muted">${h(d.sheet)}　${h(d.info && d.info.model || '')}</span></div>`).join('') || '<span class="muted">なし</span>'}</div>
     <h3>表示する要素 <span class="muted">（チェックを外すと iPhone の画面に出しません。「説明」で読み取り元・反映先・Excel化の動きを確認できます）</span></h3>
     ${elRows}
+    ${cRows ? `<div class="muted" style="margin-top:8px">追加した要素（「追加した要素」タブで作ったもの）</div>${cRows}` : ''}
     <h3>手順ボタン（修正手順・確認手順） <button class="q" data-act="info" data-k="fixed:manual">説明</button></h3>
     ${S.open['fixed:manual'] ? `<div class="el">${elInfo('manual', base)}</div>` : ''}
     ${procs.length ? procs.map(([k, v]) => `<label style="margin-right:14px"><input type="checkbox" data-proc="${k}" ${(t.manual || []).includes(k) ? 'checked' : ''}> ${h(v)}</label>`).join('') : '<span class="muted">この様式には手順ボタンがありません</span>'}
@@ -380,6 +408,117 @@ function checkImages() {
   });
 }
 
+// ---- 追加した要素（文字・数値・選択・チェック）----
+const touchNote = c => c.base === 'タッチパネル' ? '（タッチパネルは、全体が1行上にずれた様式では1行上のセルを使います）' : '';
+// 要素の説明（読み取り元・iPhone・記事・Excel化）を、設定から作る
+function customDesc(c) {
+  const kinds = S.defs.customKinds || {}, places = S.defs.customPlaces || {};
+  const r = c.read && c.read.cell ? normCell(c.read.cell) : '';
+  const w = c.write && c.write.cell ? normCell(c.write.cell) : '';
+  const tpl = c.note && c.note.template;
+  const on = c.write && c.write.on != null ? c.write.on : '○', off = c.write && c.write.off != null ? c.write.off : '';
+  return {
+    when: `様式が${c.base}の機器（機器種類ごとに出す／出さないを選べる）。場所：${places[c.place || 'beforeNote'] || ''}`,
+    read: r ? `前年度Excelの ${r} を「前回」として薄字と下に表示${touchNote(c)}。要素を追加・変更したら、PCで 1_機器一覧を登録 をし直すと読み込まれます` : '読まない（前回は出さない）',
+    app: `${kinds[c.kind] || ''}の入力欄${c.kind === 'select' ? `（${(c.options || []).join('／')}）` : ''}${c.unit ? `、単位 ${c.unit}` : ''}。${c.req && c.kind !== 'check' ? '空欄は完了時の未記入チェックの対象' : '未記入チェックの対象外'}`,
+    note: tpl && tpl.includes('{値}') ? `入力すると記事に「${tpl.replace('{値}', c.kind === 'check' ? on || '（チェック時の文字）' : '（値）')}」を入れる（同じ文があれば書き換え、空にすると消す）` : '入れない',
+    excel: w ? `${w} に書く${touchNote(c)}。${c.kind === 'number' ? '数値なら数値で、それ以外は文字で' : c.kind === 'check' ? `チェックありは「${on}」、なしは「${off || '空'}」` : '文字で'}書く。空のときは${c.write.empty === 'clear' ? 'セルを空にする' : '書かない（セルの今の値のまま）'}` : '書かない',
+  };
+}
+function customInfo(c) {
+  const d = customDesc(c);
+  const lbl = { when: '表示の条件', read: '読み取り元', app: 'iPhoneでの動き', note: '記事への反映', excel: 'Excel化の動き' };
+  return `<div class="info"><div>要素</div><div><b>${h(c.label)}</b>（追加した要素）</div>${Object.keys(lbl).map(k => `<div>${lbl[k]}</div><div>${h(d[k])}</div>`).join('')}</div>`;
+}
+// 直さないと反映できない問題（errs）と、注意（warns）
+function customProblems(c) {
+  const errs = [], warns = [];
+  const nm = c.label || '（名前なし）';
+  if (!String(c.label || '').trim()) errs.push('追加した要素に名前がありません');
+  if (c.kind === 'select' && !(c.options || []).length) errs.push(`「${nm}」の選択肢がありません`);
+  const cells = [['read', '前回を読むセル'], ['write', 'Excelに書くセル']];
+  cells.forEach(([k, lb]) => {
+    const v = c[k] && c[k].cell ? normCell(c[k].cell) : '';
+    if (v && !CELL_RE.test(v)) errs.push(`「${nm}」の${lb}「${c[k].cell}」はセル番地の形ではありません（例：AL8）`);
+  });
+  const w = c.write && c.write.cell ? normCell(c.write.cell) : '';
+  if (w && (BUILTIN_CELLS[c.base] || []).includes(w)) errs.push(`「${nm}」のExcelに書くセル ${w} は、アプリが既に書き込むセル（測定値・記事・印影など）です`);
+  if (w && (S.draft.customs || []).some(x => x !== c && x.base === c.base && x.write && normCell(x.write.cell) === w)) errs.push(`「${nm}」のExcelに書くセル ${w} は、ほかの追加した要素と同じです`);
+  if (w) warns.push(`${w} が結合したセルの一部なら、結合の左上のセルに書きます。見出しの入ったセルでないか、読み取りチェックで確かめてください`);
+  const tpl = c.note && c.note.template;
+  if (tpl) {
+    const i = tpl.indexOf('{値}');
+    if (i < 0) errs.push(`「${nm}」の記事の文面に {値} がありません`);
+    else if (!tpl.slice(0, i).trim()) errs.push(`「${nm}」の記事の文面は、{値} の前に文字が必要です（例：※絶縁抵抗：{値}MΩ）`);
+    else if (/[\s　]/.test(tpl.slice(i + 3))) warns.push(`「${nm}」の記事の文面は、{値} の後ろに空白があると書き換えがうまくいきません`);
+    if (tpl.indexOf('{値}', i + 3) >= 0) warns.push(`「${nm}」の記事の文面に {値} が2つあります（1つ目だけに値が入ります）`);
+    // {値} より前の部分が、ほかの要素と同じ・含み合うと、記事の同じ行を書き換え合う
+    const pre = tpl.slice(0, i).trim();
+    if (pre) (S.draft.customs || []).filter(x => x !== c && x.base === c.base && x.note && x.note.template && x.note.template.includes('{値}')).forEach(x => {
+      const xp = x.note.template.slice(0, x.note.template.indexOf('{値}')).trim();
+      if (xp && (xp.includes(pre) || pre.includes(xp))) errs.push(`「${nm}」と「${x.label || '（名前なし）'}」の記事の文面の {値} より前（「${pre}」「${xp}」）が重なっていて、記事の同じ行を書き換え合います。区別できる文字にしてください`);
+    });
+  }
+  if (!w && !tpl) warns.push(`「${nm}」は Excel にも記事にも書かない設定です（入力しても報告書に残りません）`);
+  return { errs, warns };
+}
+function customsListHtml() {
+  const list = S.draft.customs || [];
+  const kinds = S.defs.customKinds || {};
+  return `<p class="muted">iPhone の入力画面に、文字・数値・選択・チェックの欄を追加します。様式（計器・調節弁・タッチパネル）ごとに作り、機器種類ごとに出す／出さないを選べます。</p>
+    <div class="tlist">${list.map((c, i) => {
+      const p = customProblems(c);
+      return `<div class="t ${i === S.csel ? 'on' : ''}" data-act="csel" data-i="${i}"><div class="nm"><span class="badge b-${h(c.base)}">${h(c.base)}</span>${h(c.label || '（名前なし）')}</div>
+        <div class="cond">${h(kinds[c.kind] || '')}${c.write && c.write.cell ? '　Excel ' + h(normCell(c.write.cell)) : ''}${c.note && c.note.template ? '　記事あり' : ''}${p.errs.length ? '　<span class="ng">要修正</span>' : ''}</div></div>`;
+    }).join('') || '<p class="muted">まだありません</p>'}</div>
+    <div class="row"><button data-act="addCustom">＋ 要素を追加</button><button data-act="dupCustom">複製</button>
+      <button data-act="upCustom">↑</button><button data-act="downCustom">↓</button><button class="del" data-act="delCustom">削除</button></div>`;
+}
+function customMidHtml() {
+  const c = (S.draft.customs || [])[S.csel];
+  if (!c) return '<div class="card"><h2>追加した要素</h2><p class="muted">左の「＋ 要素を追加」で作ります。例：絶縁抵抗（数値・MΩ）、外観（選択：良好／不良）、清掃実施（チェック）。</p></div>';
+  const D = S.defs;
+  const p = customProblems(c);
+  const types = S.draft.types.filter(t => t.base === c.base);
+  const on = t => { const v = (t.show || {})['c:' + c.id]; return v == null ? c.def !== false : !!v; };
+  const w = c.write || {};
+  const sel = (k, v) => String(k) === String(v) ? 'selected' : '';
+  return `<div class="card"><h2>追加した要素の設定</h2>
+    <div id="cu-msgs">${customMsgs(p)}</div>
+    <div class="row"><label>名前</label><input data-cu="label" value="${h(c.label)}" style="flex:1" placeholder="例：絶縁抵抗"></div>
+    <div class="row"><label>様式</label><select data-cu="base">${D.kinds.map(k => `<option ${sel(k, c.base)}>${h(k)}</option>`).join('')}</select>
+      <label>入力の種類</label><select data-cu="kind">${Object.entries(D.customKinds).map(([k, v]) => `<option value="${k}" ${sel(k, c.kind)}>${h(v)}</option>`).join('')}</select>
+      ${c.kind === 'number' || c.kind === 'text' ? `<label>単位</label><input data-cu="unit" value="${h(c.unit || '')}" style="width:80px" placeholder="例：MΩ">` : ''}</div>
+    ${c.kind === 'select' ? `<div class="row"><label>選択肢</label><input data-cu="options" value="${h((c.options || []).join('、'))}" style="flex:1" placeholder="例：良好、不良（、で区切る）"></div>` : ''}
+    <div class="row"><label>表示する場所</label><select data-cu="place">${Object.entries(D.customPlaces).map(([k, v]) => `<option value="${k}" ${sel(k, c.place || 'beforeNote')}>${h(v)}</option>`).join('')}</select></div>
+    <div class="row"><label><input type="checkbox" data-cu="req" ${c.req ? 'checked' : ''} ${c.kind === 'check' ? 'disabled' : ''}> 空欄を未記入チェックの対象にする</label></div>
+    <h3>前年度Excelから「前回」を読む</h3>
+    <div class="row"><label>セル</label><input data-cu="read.cell" value="${h((c.read && c.read.cell) || '')}" style="width:90px" placeholder="例：AL8">
+      <span class="muted">空なら読まない。追加・変更したら、PC で 1_機器一覧を登録 をし直すと前回が出ます${h(touchNote(c))}</span></div>
+    <h3>Excel に書く（Excel に反映のとき）</h3>
+    <div class="row"><label>セル</label><input data-cu="write.cell" value="${h(w.cell || '')}" style="width:90px" placeholder="例：AL8">
+      <label>空のとき</label><select data-cu="write.empty"><option value="keep" ${sel('keep', w.empty || 'keep')}>書かない（セルはそのまま）</option><option value="clear" ${sel('clear', w.empty)}>セルを空にする</option></select></div>
+    ${c.kind === 'check' ? `<div class="row"><label>チェックありのとき書く文字</label><input data-cu="write.on" value="${h(w.on != null ? w.on : '○')}" style="width:90px">
+      <label>なしのとき</label><input data-cu="write.off" value="${h(w.off || '')}" style="width:90px" placeholder="空＝何も書かない"></div>` : ''}
+    <h3>記事に入れる</h3>
+    <div class="row"><label>文面</label><input data-cu="note.template" value="${h((c.note && c.note.template) || '')}" style="flex:1" placeholder="例：※絶縁抵抗：{値}MΩ（{値} に入力した値が入る。空なら入れない）"></div>
+    <h3>出す機器種類（${h(c.base)}）</h3>
+    <div class="row"><label><input type="checkbox" data-cu="def" ${c.def !== false ? 'checked' : ''}> 新しく作った種類では最初から出す</label></div>
+    ${types.map(t => `<label style="margin-right:14px"><input type="checkbox" data-ctype="${h(t.id)}" ${on(t) ? 'checked' : ''}> ${h(t.name)}</label>`).join('') || '<span class="muted">この様式の機器種類がありません</span>'}
+    <h3>説明（プレビュー・読み取りチェック・Excel化でこう動きます）</h3>
+    <div id="cu-info">${customInfo(c).replace('class="info"', 'class="info" style="margin-left:0"')}</div>
+    <p class="muted">プレビューで確かめるときは「機器種類」タブでこの様式の種類を選んでください（右の機器の入力画面に出ます）。</p></div>`;
+}
+const newCid = () => 'c' + Date.now().toString(36);
+const customMsgs = p => `${p.errs.length ? `<div class="errbox">${p.errs.map(h).join('<br>')}</div>` : ''}${p.warns.length ? `<div class="warnbox">${p.warns.map(h).join('<br>')}</div>` : ''}`;
+// 入力欄は作り直さず、警告と説明だけ書き直す
+function renderCustomLive() {
+  const c = (S.draft.customs || [])[S.csel];
+  if (!c) return;
+  const m = $('#cu-msgs'); if (m) m.innerHTML = customMsgs(customProblems(c));
+  const i = $('#cu-info'); if (i) i.innerHTML = customInfo(c).replace('class="info"', 'class="info" style="margin-left:0"');
+}
+
 // ---- 履歴 ----
 async function renderHistory() {
   const el = $('#hist');
@@ -429,6 +568,25 @@ function impact() {
   }).filter(Boolean);
   pubTypes.filter(p => !S.draft.types.some(t => t.id === p.id)).forEach(p => typeChanges.push(`種類「${p.name}」を削除`));
   if (JSON.stringify((effPublished() || {}).series || []) !== JSON.stringify(S.draft.series || [])) typeChanges.push('手順画像のシリーズ');
+  const pubC = (effPublished() || {}).customs || [];
+  (S.draft.customs || []).forEach(c => {
+    const p = pubC.find(x => x.id === c.id);
+    if (!p) typeChanges.push(`追加した要素「${c.label}」を新しく作る（${c.base}）`);
+    else if (JSON.stringify(p) !== JSON.stringify(c)) typeChanges.push(`追加した要素「${c.label}」の設定`);
+  });
+  pubC.filter(p => !(S.draft.customs || []).some(c => c.id === p.id)).forEach(p => typeChanges.push(`追加した要素「${p.label}」を削除（入力済みの値はデータに残りますが、表示も Excel への書き込みもしなくなります）`));
+  S.draft.types.forEach(t => {
+    const p = pubTypes.find(x => x.id === t.id);
+    // 追加した要素の出す／出さない：本番と編集後で、それぞれの様式がこの種類と同じときだけ「出す」になりうる
+    const ids = new Set([...(S.draft.customs || []), ...pubC].map(c => c.id));
+    ids.forEach(id => {
+      const pc = pubC.find(x => x.id === id), dc = (S.draft.customs || []).find(x => x.id === id);
+      if (!pc || !dc || !p) return;  // 新しく作る・削除は上に出している
+      const a = pc.base === t.base && (v => v == null ? pc.def !== false : !!v)((p.show || {})['c:' + id]);
+      const b = dc.base === t.base && (v => v == null ? dc.def !== false : !!v)((t.show || {})['c:' + id]);
+      if (a !== b) typeChanges.push(`「${t.name}」：${dc.label}：${a ? '出す' : '出さない'}→${b ? '出す' : '出さない'}`);
+    });
+  });
   const pubOrder = pubTypes.map(t => t.id).filter(id => S.draft.types.some(t => t.id === id));
   const draftOrder = S.draft.types.map(t => t.id).filter(id => pubTypes.some(t => t.id === id));
   if (JSON.stringify(pubOrder) !== JSON.stringify(draftOrder)) typeChanges.push('種類の並び順');
@@ -444,6 +602,7 @@ function validate() {
     ids.add(t.id);
     (t.when || []).forEach(c => { if (!['empty', 'notEmpty'].includes(c.op) && !(c.values || []).some(v => String(v).trim())) errs.push(`「${t.name}」に値の入っていない条件があります`); if (c.op === 'digits' && (c.values || []).some(v => !/^[0-9]+$/.test(String(v).trim()))) errs.push(`「${t.name}」の桁数は数字で入れてください`); });
   });
+  (S.draft.customs || []).forEach(c => errs.push(...customProblems(c).errs));
   const keys = new Set();
   (S.draft.series || []).forEach((s, i) => {
     if (!/^[a-z0-9_-]+$/.test(s.key || '')) errs.push(`シリーズ ${i + 1} 番目のキーは半角の小文字・数字・ - _ にしてください（画像の名前になります）`);
@@ -524,12 +683,15 @@ async function reloadAll(discard) {
   S.draft = clone(effPublished()); S.baseVer = S.curVer;
   ls.del('kensa-editor.draft');
   S.sel = Math.min(S.sel, S.draft.types.length - 1);
+  S.csel = 0;
   await reclassify();
   renderAll(); updatePreview();
 }
 function renderPvDevices() {
   const sel = $('#pvdev');
-  const t = S.draft && S.draft.types[S.sel];
+  // 「追加した要素」タブでは、その要素の様式の機器から選ぶ
+  const cu = S.tab === 'customs' && S.draft && (S.draft.customs || [])[S.csel];
+  const t = S.draft && (cu ? { id: '__none', base: cu.base } : S.draft.types[S.sel]);
   if (!t) return;
   const mine = S.devices.filter(d => (S.classDraft[d.id] || {}).type === t.id);
   const pool = mine.length ? mine : S.devices.filter(d => d.kind === t.base);
@@ -537,7 +699,7 @@ function renderPvDevices() {
   sel.innerHTML = pool.map(d => `<option value="${h(d.id)}">${h(d.tag)}（${h(d.sheet)}）</option>`).join('') ||
     '<option value="">（この種類に当てはまる機器がありません）</option>';
   if (pool.some(d => d.id === cur)) sel.value = cur;
-  if (!mine.length && pool.length) sel.insertAdjacentHTML('afterbegin', '<option disabled>― 当てはまる機器が無いので、同じ様式の機器を表示 ―</option>');
+  if (!mine.length && pool.length && !cu) sel.insertAdjacentHTML('afterbegin', '<option disabled>― 当てはまる機器が無いので、同じ様式の機器を表示 ―</option>');
 }
 const newId = () => 't' + Date.now().toString(36);
 
@@ -556,7 +718,33 @@ document.addEventListener('click', async e => {
     ls.set('kensa-editor.conn', S.conn);
     boot();
   }
-  else if (act === 'tab') { S.tab = b.dataset.t; renderLeft(); renderMid(); if (S.tab === 'series') checkImages(); }
+  else if (act === 'tab') { S.tab = b.dataset.t; renderLeft(); renderMid(); renderPvDevices(); updatePreview(); if (S.tab === 'series') checkImages(); }
+  else if (act === 'csel') { S.csel = +b.dataset.i; renderLeft(); renderMid(); renderPvDevices(); updatePreview(); }
+  else if (act === 'addCustom') {
+    const C = (S.draft.customs = S.draft.customs || []);
+    const base = (C[S.csel] && C[S.csel].base) || '計器';
+    C.push({ id: newCid(), label: '', base, kind: 'text', place: 'beforeNote', req: false, def: true, read: { cell: '' }, write: { cell: '', empty: 'keep' }, note: { template: '' } });
+    S.csel = C.length - 1; renderLeft(); renderMid(); renderPvDevices(); changed();
+  }
+  else if (act === 'dupCustom' && (S.draft.customs || [])[S.csel]) {
+    const src = S.draft.customs[S.csel];
+    const c = clone(src); c.id = newCid(); c.label += '（コピー）'; if (c.write) c.write.cell = '';
+    // 種類ごとの出す／出さないも写す
+    S.draft.types.forEach(t => { if (t.show && ('c:' + src.id) in t.show) t.show['c:' + c.id] = t.show['c:' + src.id]; });
+    S.draft.customs.splice(S.csel + 1, 0, c); S.csel++; renderLeft(); renderMid(); changed();
+  }
+  else if (act === 'delCustom' && (S.draft.customs || [])[S.csel]) {
+    const c = S.draft.customs[S.csel];
+    if (!confirm(`追加した要素「${c.label || '（名前なし）'}」を削除します。\n入力済みの値はデータに残りますが、iPhone に出なくなり、Excel にも書かなくなります。よろしいですか？`)) return;
+    S.draft.customs.splice(S.csel, 1);
+    S.draft.types.forEach(t => { if (t.show) delete t.show['c:' + c.id]; });
+    S.csel = Math.max(0, Math.min(S.csel, S.draft.customs.length - 1)); renderLeft(); renderMid(); renderPvDevices(); changed();
+  }
+  else if ((act === 'upCustom' || act === 'downCustom') && (S.draft.customs || [])[S.csel]) {
+    const C = S.draft.customs; const j = act === 'upCustom' ? S.csel - 1 : S.csel + 1;
+    if (j < 0 || j >= C.length) return;
+    [C[S.csel], C[j]] = [C[j], C[S.csel]]; S.csel = j; renderLeft(); changed();
+  }
   else if (act === 'sel') { S.sel = +b.dataset.i; renderLeft(); renderMid(); renderPvDevices(); updatePreview(); }
   else if (act === 'info') { S.open[b.dataset.k] = !S.open[b.dataset.k]; renderMid(); }
   else if (act === 'addType') {
@@ -592,7 +780,7 @@ document.addEventListener('click', async e => {
     const c = v ? ((S.history || []).find(r => r.ver === v) || {}).config : S.defs.defaults;
     if (!c) return;
     if (dirty() && !confirm('編集中の内容を捨てて、この版を編集に読み込みます。よろしいですか？（本番は変わりません）')) return;
-    S.draft = clone(c); S.baseVer = S.curVer; S.sel = 0; S.tab = 'types'; changed(); renderAll();
+    S.draft = clone(c); S.baseVer = S.curVer; S.sel = 0; S.csel = 0; S.tab = 'types'; changed(); renderAll();
   }
   else if (act === 'pubVer') {
     const v = +b.dataset.v;
@@ -602,8 +790,25 @@ document.addEventListener('click', async e => {
   }
 });
 
+// 追加した要素の欄：'write.cell' のような名前で値を入れる
+function setCu(c, path, val) {
+  const ks = path.split('.');
+  let o = c;
+  for (let i = 0; i < ks.length - 1; i++) o = (o[ks[i]] = (o[ks[i]] && typeof o[ks[i]] === 'object') ? o[ks[i]] : {});
+  o[ks[ks.length - 1]] = val;
+}
 document.addEventListener('input', e => {
   const t = e.target;
+  // 追加した要素の文字の欄：入力中は欄を作り直さない（離れたとき＝change で説明と警告を書き直す）
+  if (t.dataset.cu && S.draft && t.type !== 'checkbox' && t.tagName !== 'SELECT') {
+    const c = (S.draft.customs || [])[S.csel];
+    if (!c) return;
+    const k = t.dataset.cu;
+    const v = k === 'options' ? t.value.split(/[、,，]/).map(x => x.trim()).filter(Boolean) : /cell$/.test(k) ? normCell(t.value) : t.value;
+    setCu(c, k, v);
+    changed(); renderLeftSoon();
+    return;
+  }
   // シリーズの欄は種類が無くても編集できるように先に扱う
   if (t.dataset.sf != null && S.draft) {
     const s = S.draft.series[+t.dataset.sf];
@@ -624,6 +829,31 @@ document.addEventListener('change', e => {
   const t = e.target;
   const T = S.draft && S.draft.types[S.sel];
   if (t.id === 'pvdev' || t.id === 'pvmode' || t.id === 'pvdetails') { updatePreview(); return; }
+  // 追加した要素
+  if ((t.dataset.cu || t.dataset.ctype) && S.draft) {
+    const c = (S.draft.customs || [])[S.csel];
+    if (!c) return;
+    if (t.dataset.ctype) {
+      const ty = S.draft.types.find(x => x.id === t.dataset.ctype);
+      if (ty) (ty.show = ty.show || {})['c:' + c.id] = t.checked;
+    } else if (t.type === 'checkbox') setCu(c, t.dataset.cu, t.checked);
+    else if (t.tagName === 'SELECT') {
+      if (t.dataset.cu === 'base' && c.base !== t.value) {
+        if (!confirm('様式を変えると、読む・書くセルの意味も変わります（セルを確かめ直してください）。よろしいですか？')) { t.value = c.base; return; }
+        // 古い様式の種類に残った出す／出さないは消す（様式を戻したときに古い値が効かないように）
+        S.draft.types.forEach(ty => { if (ty.base === c.base && ty.show) delete ty.show['c:' + c.id]; });
+      }
+      setCu(c, t.dataset.cu, t.value);
+      if (t.dataset.cu === 'kind' && t.value === 'check') c.req = false;
+    } else {
+      // 文字の欄から離れた：値は input で入れてあるので、警告と説明だけ書き直す（ほかの欄を押した操作を消さないよう、欄は作り直さない）
+      // 左の一覧は少し後で作り直す（離れた直後に押した左のボタンの操作を消さないため）
+      renderCustomLive(); renderLeftSoon();
+      return;
+    }
+    renderLeft(); renderMid(); renderPvDevices(); changed();
+    return;
+  }
   if (!T) return;
   if (t.id === 't-base') {
     if (!confirm('様式を変えると、この種類に当てはまる機器や出せる要素が変わります。よろしいですか？')) { t.value = T.base; return; }

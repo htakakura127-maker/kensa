@@ -193,6 +193,8 @@ textarea.memo { display: block; width: 100%; min-height: 110px; }
 .panel { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; }
 .panel .pname { font-weight: 700; }
 .pitem { display: grid; grid-template-columns: minmax(0, 1fr) 120px; gap: 8px; align-items: center; margin-top: 8px; font-size: 14px; }
+.cfield { margin-top: 10px; }
+.cfield .chk { margin-top: 0; }
 .pclock { display: grid; grid-template-columns: minmax(0, 1fr) 120px; gap: 8px; align-items: center; margin-top: 6px; font-size: 14px; }
 .ptext { font-size: 12px; color: var(--sub); margin-top: 4px; }
 .actions { position: fixed; left: 0; right: 0; bottom: 0; z-index: 4; padding: 8px 16px calc(env(safe-area-inset-bottom) + 8px); background: rgba(243,245,248,.96); border-top: 1px solid var(--line); }
@@ -317,7 +319,72 @@ function validConfig(c) {
     (t.show == null || isObj(t.show)) && (t.manual == null || isStrArr(t.manual));
   if (!c.types.every(okType)) return null;
   if (c.series != null && !(Array.isArray(c.series) && c.series.every(s => isObj(s) && typeof s.key === 'string' && (s.prefixes == null || isStrArr(s.prefixes))))) return null;
+  // 追加した要素（customs）
+  //   （gas\Code.gs の configProblem_、pc\common.ps1 の Test-ValidConfig も同じ）
+  const okStr = x => x == null || typeof x === 'string';
+  const okBool = x => x == null || typeof x === 'boolean';
+  const okSub = (x, ks) => x == null || (isObj(x) && ks.every(k => okStr(x[k])));
+  const RESERVED = ['constructor', 'prototype', '__proto__', 'hasownproperty', 'tostring', 'valueof'];
+  const okCustom = e => isObj(e) && typeof e.id === 'string' && /^[a-z0-9_]+$/.test(e.id) && !RESERVED.includes(e.id) && typeof e.label === 'string' &&
+    Object.values(KIND).includes(e.base) && Object.keys(CUSTOM_KINDS).includes(e.kind) && (e.options == null || isStrArr(e.options)) &&
+    (e.place == null || Object.keys(CUSTOM_PLACES).includes(e.place)) && okStr(e.unit) && okBool(e.req) && okBool(e.def) &&
+    okSub(e.read, ['cell']) && okSub(e.write, ['cell', 'empty', 'on', 'off']) && okSub(e.note, ['template']);
+  if (c.customs != null && !(Array.isArray(c.customs) && c.customs.every(okCustom) && new Set(c.customs.map(e => e.id)).size === c.customs.length)) return null;
   return c;
+}
+
+// ---- 追加した要素（編集画面で作る、文字・数値・選択・チェックの入力欄）----
+//   設定の customs：{ id, label, base（様式）, kind, options（選択肢）, unit（単位）, place（表示する場所）, req（未記入チェック）, def（初期は全種類に出す）,
+//     read:{cell}（前年度Excelのこのセルを「前回」に出す。登録のときに読む）, write:{cell, empty:'keep'|'clear', on, off}（Excelに書く。pc の Excel反映が書く）,
+//     note:{template}（記事に入れる文面。{値} に入力した値が入る） }
+//   入力した値は data.custom[id]。機器種類ごとの表示は show['c:'+id]
+const CUSTOM_KINDS = { text: '文字', number: '数値', select: '選択', check: 'チェック' };
+const CUSTOM_PLACES = { afterTemp: '試験日・温度の後', afterChecks: '機器情報の確認の後（タッチパネルは各台の前）', afterPv: 'PV・時刻合わせの後（測定値の前。タッチパネルは各台の前）', afterPoints: '測定値の後（判定の前。タッチパネルは全台の後）', beforeStamps: '作業員・検査員の前', beforeNote: '記事の前' };
+const customDef = id => (appConfig.customs || []).find(c => c.id === id);
+const customsOf = d => (appConfig.customs || []).filter(c => c.base === d.kind && opt(d, 'c:' + c.id));
+// 記事に入れる文字（チェックは on／off の文字）
+function customText(c, v) {
+  if (c.kind === 'check') return v ? (c.write && c.write.on != null ? c.write.on : '○') : (c.write && c.write.off != null ? c.write.off : '');
+  return String(v == null ? '' : v).trim();
+}
+function customFields(d, data, editable, place) {
+  const dis = editable ? '' : 'disabled';
+  const list = customsOf(d).filter(c => (c.place || 'beforeNote') === place);
+  if (!list.length) return '';
+  return list.map(c => {
+    const v = data.custom[c.id];
+    const prev = ((d.info.customPrev || {})[c.id]);
+    const hint = `<div class="hint"><span class="prev">${prev != null && String(prev).trim() !== '' ? '前回 ' + h(fmt(prev)) + (c.unit ? h(c.unit) : '') : ''}</span></div>`;
+    if (c.kind === 'check') return `<label class="chk"><input type="checkbox" data-k="custom.${h(c.id)}" ${v ? 'checked' : ''} ${dis}>${h(c.label)}</label>${hint}`;
+    const lb = `${h(c.label)}${c.unit ? ` (${h(c.unit)})` : ''}`;
+    if (c.kind === 'select') {
+      return `<label>${lb}<select data-k="custom.${h(c.id)}" ${dis}><option value="">（選択）</option>${(c.options || []).map(o => `<option ${String(o) === String(v) ? 'selected' : ''}>${h(o)}</option>`).join('')}</select></label>${hint}`;
+    }
+    const num = c.kind === 'number';
+    return `<label>${lb}<input ${num ? 'class="num" inputmode="decimal"' : ''} autocomplete="off" data-k="custom.${h(c.id)}" value="${h(v == null ? '' : v)}" placeholder="${h(fmt(prev == null ? '' : prev))}" ${dis}></label>${hint}`;
+  }).map(x => `<div class="cfield">${x}</div>`).join('');
+}
+// 記事に入れる：文面（例「※絶縁抵抗：{値}MΩ」）の {値} より前（「※絶縁抵抗：」）が、行の頭か空白の直後にある行を探し、
+//   そこから {値} より後ろ（「MΩ」）までを書き換える（後ろが空なら行の終わりまで）。無ければ最後に1行足す。値が空なら消す
+//   （値や単位に空白があっても、ほかの行の途中の同じ文字（「抵抗：」と「※絶縁抵抗：」）にも当たらないように）
+function applyCustomNote(c, data) {
+  const tpl = (c.note && c.note.template) || '';
+  const i = tpl.indexOf('{値}');
+  if (i < 0) return;
+  const prefix = tpl.slice(0, i);
+  const suffix = tpl.slice(i + 3);
+  if (!prefix.trim()) return;
+  const v = customText(c, data.custom[c.id]);
+  const lines = String(data.note || '') ? String(data.note).split('\n') : [];
+  const re = new RegExp('(^|[\\s　])' + escRe(prefix) + (suffix ? '.*?' + escRe(suffix) : '.*$'));
+  const at = lines.findIndex(l => re.test(l));
+  if (!v) {
+    if (at >= 0) { const rest = lines[at].replace(re, (m, b) => b).replace(/[\s　]{2,}/g, '　').replace(/^[\s　]+|[\s　]+$/g, ''); if (rest) lines[at] = rest; else lines.splice(at, 1); }
+  } else {
+    const text = prefix + v + suffix;  // replace の $ 記号の特別な意味を避けるため、つなげて作る
+    if (at >= 0) lines[at] = lines[at].replace(re, (m, b) => b + text); else lines.push(text);
+  }
+  data.note = lines.join('\n');
 }
 let appConfig = validConfig(store.get('config', null)) || DEFAULT_CONFIG;
 
@@ -349,6 +416,13 @@ function typeOf(d, conf) {
 }
 // その機器で要素を出すか（様式で使えない要素は出さない。親が非表示なら子も出さない）
 function opt(d, key) {
+  if (key.startsWith('c:')) {
+    // 追加した要素：その様式の要素で、種類の設定に無ければ要素の def（初期は全種類に出す）
+    const c = customDef(key.slice(2));
+    if (!c || c.base !== d.kind) return false;
+    const v = (typeOf(d).show || {})[key];
+    return v == null ? c.def !== false : !!v;
+  }
   const def = SHOW_DEF.find(x => x.key === key);
   if (!def || !def.bases.includes(d.kind)) return false;
   if (def.parent && !opt(d, def.parent)) return false;
@@ -577,6 +651,7 @@ function normalize(d, data) {
   out.pv.b = Array.isArray(out.pv.b) ? out.pv.b : [];
   out.pv.na = out.pv.na || {};
   out.clock = Object.assign({ done: '', dir: '遅れ', amount: '', unit: '分' }, out.clock);
+  out.custom = Object.assign({}, out.custom);  // 追加した要素の入力値（id → 値）
   out.tests = VALVE_TESTS.map((_, i) => Object.assign({ p: '', t: '', j: '' }, (out.tests || [])[i] || {}));
   out.ch = (d.info.chs || []).map((_, k) => Object.assign(emptyCh(), ((data && data.ch) || [])[k] || {}));
   if (d.kind === KIND.TOUCH) {
@@ -1522,13 +1597,16 @@ function form(d, data, editable) {
     </div>
     ${showTemp && editable && opt(d, 'lastTemp') ? lastTempBlock() : ''}
     ${showDate || !opt(d, 'date') ? '' : '<p class="muted">この報告書には試験日の欄がありません。</p>'}`;
-  // 並び：試験日・温度 → 機器情報の確認 → PV（計器）→ 時刻合わせ（記録計）
+  // 並び：試験日・温度 → 機器情報の確認 → PV（計器）→ 時刻合わせ（記録計）。追加した要素は設定の「表示する場所」に入る
+  html += customFields(d, data, editable, 'afterTemp');
   const checks = i.checks || [];
   const checkHelp = '<small>現物と見比べて「確認」。違っていたら「変更」（報告書のセルが黄色になります）</small>';
   if (d.kind !== KIND.TOUCH && checks.length && showChecks) html += `<h3>機器情報の確認 ${checkHelp}</h3>${checkRows(data, checks, editable, d)}`;
+  html += customFields(d, data, editable, 'afterChecks');
   if (d.kind === KIND.TOUCH && checks.length && showChecks) html += `<h3>機器情報の確認 ${checkHelp}</h3>`;
   if (opt(d, 'pv') && pvItems(d).length) html += `<h3>PV</h3>${pvFields(d, data, editable)}`;
   if (opt(d, 'clock')) html += clockSection(d, data, editable);
+  html += customFields(d, data, editable, 'afterPv');
 
   if (d.kind === KIND.TOUCH) {
     html += i.panels.map((p, b) => {
@@ -1552,6 +1630,7 @@ function form(d, data, editable) {
         ${pc.length && showChecks ? checkRows(data, pc, editable, d) : `<div class="muted">${h(p.model)}　${h(p.serial)}${p.made ? '　' + h(p.made) : ''}</div>`}${items}
         ${prevNg.length ? `<div class="ptext">前回（時計以外）：${h(prevNg.join('／'))}</div>` : ''}</div>`;
     }).join('');
+    html += customFields(d, data, editable, 'afterPoints');
   } else {
     i.chs.forEach((ch, k) => {
       const c = data.ch[k];
@@ -1562,6 +1641,7 @@ function form(d, data, editable) {
       if (opt(d, 'adjust') || c.adj) html += `<label class="chk"><input type="checkbox" data-k="ch.${k}.adj" ${c.adj ? 'checked' : ''} ${dis}>調整した（調整後の値も入力）</label>`;
       if (c.adj) html += pointTable(ch, k, 'adjUp', 'adjDown', c, editable, '調整後', false);
     });
+    html += customFields(d, data, editable, 'afterPoints');
     if (d.kind === KIND.KEIKI) {
       if (opt(d, 'result')) html += `<div class="grid2" style="margin-top:12px">
         <label>判定<select data-k="result" ${dis}>${opts(['合格', '不合格'], data.result)}</select></label></div>`;
@@ -1572,6 +1652,7 @@ function form(d, data, editable) {
     }
     if (opt(d, 'parts')) html += partsSection(d, data, editable);
   }
+  html += customFields(d, data, editable, 'beforeStamps');
 
   // 署名（印影）：報告書の検査・作業員欄の一番右が作業員、右から2番目より左が検査員（押した順）
   const sel = data.inspectors;
@@ -1582,7 +1663,7 @@ function form(d, data, editable) {
     <div class="names pick" id="insp-group">${pick.map(n => {
       const k = sel.indexOf(n);
       return `<button type="button" class="${k >= 0 ? 'on' : ''}" data-act="insp" data-name="${h(n)}" ${dis}>${k >= 0 ? (k + 1) + '. ' : ''}${h(n)}</button>`;
-    }).join('')}</div>
+    }).join('')}</div>${customFields(d, data, editable, 'beforeNote')}
     <label style="margin-top:14px">記事<textarea data-k="note" ${dis}>${h(data.note)}</textarea></label>
     <div class="noteprev" id="noteprev">${notePreview(d, data.note)}</div>
     ${i.chs && i.chs.length && opt(d, 'deviation') ? '<p class="muted">誤差は「(測定値−基準)÷スパン」の目安です。精度を超えると赤字になります。正式な値はExcelで計算されます。</p>' : ''}`;
@@ -1710,6 +1791,9 @@ function findMissing(d, data) {
   const checks = opt(d, 'checksReq') ? (d.info.checks || []).filter(c => !fieldOf(data, c).ok).map(c => c.key) : [];
   const noWorker = opt(d, 'workerReq') && !data.worker;
   const noInsp = opt(d, 'inspReq') && !data.inspectors.length;
+  // 追加した要素で「未記入チェックの対象」にしたもの（チェックは対象外）
+  const cust = customsOf(d).filter(c => c.req && c.kind !== 'check' && String(data.custom[c.id] == null ? '' : data.custom[c.id]).trim() === '');
+  keys.push(...cust.map(c => 'custom.' + c.id));
   const msg = [];
   const meas = keys.filter(k => k.startsWith('ch.')).length;  // 温度・時刻合わせは個別に数える
   if (meas) msg.push(`・測定値 ${meas} か所`);
@@ -1718,6 +1802,7 @@ function findMissing(d, data) {
   if (clockAmt.length) msg.push(`・時計のずれの量 ${clockAmt.length} か所`);
   if (pv.length) msg.push(`・PV ${pv.length} か所（機器に無い項目は「不要」）`);
   if (checks.length) msg.push(`・機器情報の「確認」 ${checks.length} 件`);
+  cust.forEach(c => msg.push('・' + c.label));
   if (noWorker) msg.push('・作業員');
   if (noInsp) msg.push('・検査員（1名以上）');
   return { keys, checks, worker: noWorker, insp: noInsp, msg };
@@ -1971,6 +2056,9 @@ function onEdit(e) {
   if (!dr || t.disabled) return;
   setPath(dr.data, k, t.type === 'checkbox' ? t.checked : t.value);
   if (k.startsWith('tests.')) dr.data.testsEdited = true;
+  // 追加した要素：記事に入れる文面があれば記事を書き換える
+  const cust = k.startsWith('custom.') ? customDef(k.slice(7)) : null;
+  if (cust && cust.note && cust.note.template) applyCustomNote(cust, dr.data);
   if (k === 'temp') rememberTemp(getDev(view.id), t.value);  // 手で入力した温度だけを「最後に入力した温度」にする
   const clock = k.match(/^panels\.(\d+)\.clock(Dir|Min)$/);
   if (clock) {
@@ -1983,9 +2071,9 @@ function onEdit(e) {
   if (t.type === 'checkbox' || (clock && clock[2] === 'Dir')) renderDetail();
   else if (k.startsWith('ch.')) updateDevs(getDev(view.id), dr.data);
   else if (k === 'note') { const np = $('#noteprev'); if (np) np.innerHTML = notePreview(getDev(view.id), dr.data.note); }
-  else if (k.startsWith('pv.') || k.startsWith('clock.')) {
+  else if (k.startsWith('pv.') || k.startsWith('clock.') || (cust && cust.note && cust.note.template)) {
     if (k.startsWith('pv.')) applyPv(getDev(view.id), dr.data);
-    else {
+    else if (k.startsWith('clock.')) {
       applyClock(dr.data);
       const cn = $('#clock-now');
       if (cn) cn.textContent = clockNoteText(dr.data.clock) || '（有・無を選んでください）';
@@ -2099,7 +2187,8 @@ if (PREVIEW) {
   // 編集画面へ「準備ができた」と、アプリの初期値・要素の一覧などを送る（編集画面はこれを使うので、定義はアプリの中の1か所だけ）
   function sendReady() {
     if (window.parent !== window) {
-      window.parent.postMessage({ type: 'previewReady', defaults: DEFAULT_CONFIG, showDef: SHOW_DEF, condFields: COND_FIELDS, condOps: COND_OPS, procs: MANUAL_PROCS, kinds: Object.values(KIND) }, MSG_TARGET);
+      window.parent.postMessage({ type: 'previewReady', defaults: DEFAULT_CONFIG, showDef: SHOW_DEF, condFields: COND_FIELDS, condOps: COND_OPS, procs: MANUAL_PROCS, kinds: Object.values(KIND),
+        customKinds: CUSTOM_KINDS, customPlaces: CUSTOM_PLACES }, MSG_TARGET);
     }
   }
   sendReady();
