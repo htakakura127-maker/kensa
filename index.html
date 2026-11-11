@@ -61,7 +61,7 @@ textarea { min-height: 120px; resize: vertical; }
 .item .sub { font-size: 13px; color: var(--sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .badge { flex: none; font-size: 12px; font-weight: 700; color: #fff; padding: 3px 9px; border-radius: 99px; max-width: 45%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .st-todo { background: var(--todo); } .st-work { background: var(--work); } .st-done { background: var(--done); } .st-pend { background: #e08a00; }
-.st-wait { background: #7b4fb8; } .st-temp { background: #2f6fa8; }
+.st-wait { background: #7b4fb8; } .st-temp { background: #2f6fa8; } .st-ng { background: var(--ng); }
 /* 押したことが分かるよう、押している間は少し薄くする */
 button:active, .btn:active, .menu:active, .item:active { opacity: .55; }
 /* 右上の「更新中…」 */
@@ -149,6 +149,15 @@ textarea.memo { display: block; width: 100%; min-height: 110px; }
 .memoinfo .ng { color: var(--ng); font-weight: 700; }
 /* フラグ：一覧の枠の左横に付箋（枠の大きさは変えず、左の余白にはみ出させる） */
 .item { position: relative; }
+/* 一覧の右側：状態の表示の下に点検シールのスイッチ */
+.item .right { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 5px; max-width: 45%; }
+.item .right .badge { max-width: 100%; }
+.seal { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--sub); padding: 2px 0 2px 6px; }
+.seal .track { position: relative; width: 34px; height: 19px; border-radius: 99px; background: #c4ccd4; transition: background .15s; }
+.seal .knob { position: absolute; top: 2px; left: 2px; width: 15px; height: 15px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.3); transition: left .15s; }
+.seal.on { color: var(--done); font-weight: 700; }
+.seal.on .track { background: var(--done); }
+.seal.on .knob { left: 17px; }
 .item .flagtab { position: absolute; left: -12px; top: 7px; width: 14px; height: 26px; background: #f7c600; border-radius: 2px 0 0 2px; box-shadow: -1px 1px 2px rgba(0,0,0,.25); pointer-events: none; }
 .ttlrow { display: flex; align-items: flex-start; gap: 8px; }
 .ttlrow > div { flex: 1; min-width: 0; font-weight: 700; }
@@ -266,7 +275,6 @@ const SHOW_DEF = /*SHOW_DEF_BEGIN*/[
   { "key": "touchClockReq", "label": "時計のずれの分を未記入チェックの対象にする", "bases": ["タッチパネル"], "def": true, "req": true, "el": "touchItems" },
   { "key": "clockJst", "label": "日本標準時間ボタン（時刻合わせ欄の中）", "bases": ["計器"], "def": true, "parent": "clock", "el": "jst" },
   { "key": "jst", "label": "日本標準時間ボタン（各台の画面切り替えの下）", "bases": ["タッチパネル"], "def": true, "el": "jst" },
-  { "key": "pointsReq", "label": "測定値の空欄を未記入チェックの対象にする", "bases": ["計器", "調節弁"], "def": true, "req": true, "el": "points" },
   { "key": "adjust", "label": "「調整した」（調整後の値の入力）", "bases": ["計器", "調節弁"], "def": true, "el": "points" },
   { "key": "deviation", "label": "誤差の目安", "bases": ["計器", "調節弁"], "def": true, "el": "deviation" },
   { "key": "result", "label": "判定（合格・不合格／良好・動作不良）", "bases": ["計器", "調節弁"], "def": true, "el": "result" },
@@ -553,10 +561,24 @@ async function netTask(fn) {
 async function refresh(quiet) {
   try {
     const j = await netTask(() => api('list', {}));
-    devices = j.devices;
+    // 一覧を取りに行っている間に、この端末で送信・作業開始などをして新しくなった機器は、届いた古い内容で戻さない
+    //   （送信した直後に「作業中」に戻って見える不具合の対策。updatedAt は「yyyy-MM-dd HH:mm:ss.SSS」なので文字で比べられる）
+    const mineNow = new Map(devices.map(d => [d.id, d]));
+    devices = j.devices.map(d => { const m = mineNow.get(d.id); return m && String(m.updatedAt || '') > String(d.updatedAt || '') ? m : d; });
     fetchedAt = j.now;
     if (j.memos) { memos = j.memos; store.set('memos', memos); }
-    if (j.notes) { notes = j.notes; store.set('notes', notes); }
+    if (j.notes) {
+      // 点検シール：一覧を取りに行っている間に押したものは、届いた古い内容で戻さない。
+      //   残すのは「送信中」か「サーバーが一覧を作った時刻（j.now）より後に記録されたもの」だけ
+      //   （それ以外はサーバーの内容に従う。ほかの人が外した・初期化で外れた、も正しく反映するため）
+      const old = notes;
+      notes = j.notes;
+      Object.keys(old).forEach(id => {
+        const o = old[id], n = notes[id] || {};
+        if (o && (o.sealPending || (o.sealAt && String(o.sealAt) > String(j.now || '')))) notes[id] = Object.assign({}, n, { seal: o.seal, sealAt: o.sealAt, sealBy: o.sealBy, sealPending: o.sealPending });
+      });
+      store.set('notes', notes);
+    }
     // 設定（機器種類など）。サーバーに設定が無い・古いサーバー・使えない形なら初期値を使う
     if ('config' in j) {
       const c = validConfig(j.config);
@@ -587,24 +609,32 @@ async function refresh(quiet) {
 async function sync() {
   if (PREVIEW || syncing || !ready()) return;
   syncing = true;
+  let needRefresh = false;
+  let closedId = null;
   try {
     for (const id of Object.keys(drafts)) {
       const dr = drafts[id];
       if (!dr || !dr.pending || dr.blocked) continue;  // 送信中に初期化で消された下書きは飛ばす
       const rev = dr.rev;
       try {
-        const j = await netTask(() => api('save', { id, data: dr.data, finish: !!dr.finish }));
+        // lock：作業開始のときの番号（startedAt）。別の端末（同じ名前）で開始し直されていたら、サーバーが受け付けない
+        const sentJson = JSON.stringify(dr.data);
+        const j = await netTask(() => api('save', { id, data: dr.data, finish: !!dr.finish, lock: dr.lock || '' }));
         updateDevice(j.device);
+        // サーバーに届いた内容（次に作業開始するとき、サーバーがほかの人に変えられたかを比べる基準）
+        if (drafts[id]) { drafts[id].base = j.device.updatedAt; drafts[id].sentJson = sentJson; }
         const cur = drafts[id];
         if (cur && cur.rev === rev) {
           if (cur.finish) delete drafts[id]; else cur.pending = false;
         }
         saveDrafts();
+        if (!drafts[id] && view.screen === 'detail' && view.id === id) closedId = id;  // 開いている機器の下書きが無くなった
       } catch (e) {
         if (['offline', 'busy', 'bad', 'auth', 'config', 'blocked'].includes(e.code)) break;
         if (drafts[id] !== dr) continue;  // 初期化で消された下書き
         dr.blocked = e.message;  // ロックを失った等。データは残してユーザーに知らせる
         saveDrafts();
+        needRefresh = true;      // ほかの人が完了させた等、サーバーの今の状態を取り直す（「修正のため再開」などのボタンを正しくするため）
       }
     }
   } finally {
@@ -612,7 +642,14 @@ async function sync() {
     renderNet();
     if (ready() && view.screen !== 'detail') render();
   }
+  if (needRefresh) {
+    await refresh(true);
+    if (view.screen === 'detail') renderDetail();  // 開いている画面のボタン（作業を再開／修正のため再開）を今の状態に
+  } else if (closedId && view.screen === 'detail' && view.id === closedId && !finishing) {
+    renderDetail();  // 送信が済んで下書きが無くなった機器の画面を、今の状態（完了など）にする
+  }
 }
+let finishing = false;  // 「完了して送信」の処理中（その間は画面を作り直さない。終わったら一覧へ戻る）
 
 function scheduleSync(ms) {
   clearTimeout(syncTimer);
@@ -1170,6 +1207,8 @@ function touchDraft(id) {
 
 function localStatus(d) {
   const dr = drafts[d.id];
+  // サーバーに拒否された入力（自動では送られない）：完了には数えず、赤で知らせる
+  if (dr && dr.blocked && dr.pending) return { cls: 'ng', text: '送信できず' };
   if (dr && dr.finish && dr.pending) return { cls: 'pend', text: '完了(未送信)' };
   if (d.status === ST.WORK) return { cls: 'work', text: d.worker === cfg.name ? '作業中(自分)' : '作業中 ' + d.worker };
   if (d.status === ST.DONE) return { cls: 'done', text: '完了' };
@@ -1252,7 +1291,32 @@ function itemButton(d) {
   const mine = d.status === ST.WORK && d.worker === cfg.name;
   return `<button class="item ${mine ? 'mine' : ''}" data-act="open" data-id="${h(d.id)}">
     ${(notes[d.id] || {}).flag ? '<i class="flagtab"></i>' : ''}<div class="main"><div class="tag">${h(d.tag)}</div><div class="sub">${h(d.title)}${d.kind !== KIND.TOUCH && d.info && d.info.loc ? '（' + h(d.info.loc) + '）' : ''}</div></div>
-    <span class="badge st-${s.cls}">${h(s.text)}</span></button>`;
+    <span class="right"><span class="badge st-${s.cls}">${h(s.text)}</span>${sealSwitch(d)}</span></button>`;
+}
+
+// 点検シールを貼ったかの確認用スイッチ（全員で共有。データ初期化で外れる）。押しても機器は開かない
+function sealSwitch(d) {
+  const on = !!(notes[d.id] || {}).seal;
+  return `<span class="seal ${on ? 'on' : ''}" role="switch" aria-checked="${on}" data-act="seal" data-id="${h(d.id)}"><span class="sl">シール</span><span class="track"><span class="knob"></span></span></span>`;
+}
+
+// スイッチはすぐ切り替えて見せ、裏でサーバーへ送る（だめなら元に戻す）
+async function toggleSeal(id) {
+  const d = getDev(id);
+  if (!d) return;
+  const before = Object.assign({}, notes[id]);
+  const seal = !before.seal;
+  notes[id] = Object.assign({}, before, { seal, sealPending: true });
+  render();
+  try {
+    const j = await netTask(() => api('setSeal', { id, tag: d.tag, plant: d.plant, seal }));
+    notes[id] = j.note;
+    store.set('notes', notes);
+  } catch (e) {
+    notes[id] = Object.assign({}, before, { sealPending: false });
+    alert(e.code === 'offline' ? '点検シールの記録には電波が必要です。' : e.message);
+  }
+  if (view.screen !== 'detail') render();
 }
 
 function renderPlants() {
@@ -1515,16 +1579,28 @@ function renderDetail() {
   if (!d) { leaveDetail(); return render(); }
   renderTop(d.tag, BACK_LABEL[view.from] || BACK_LABEL.list);
   const mine = d.status === ST.WORK && d.worker === cfg.name;
-  if (mine && !drafts[d.id]) { drafts[d.id] = { data: normalize(d, d.data), rev: 0, pending: false }; saveDrafts(); }
+  // 自分の名前で作業中でも、この端末で作業を開始していなければ（下書きが無い＝同じ名前の別の端末など）、自動では入力できるようにしない
+  //   （2台が同じ作業の番号を持って、両方から送れてしまうのを防ぐ。「この端末で作業を続ける」で開始し直す）
   const dr = drafts[d.id];
+  // 同じ名前の別の端末で作業が開始し直されている（作業の番号が違う）：この端末からは送れないので止める
+  if (mine && dr && dr.lock && d.startedAt && dr.lock !== d.startedAt && !dr.blocked) {
+    dr.blocked = 'この機器は別の端末（同じ名前）で作業が開始されています';
+    saveDrafts();
+  }
   // 前のバージョンで作った下書きには、後から増えた項目（確認欄・作業員など）が無いため、今の形にそろえる
   if (dr) dr.data = normalize(d, dr.data);
   let head = '', data = null, editable = false, actions = '';
 
   if (dr && dr.blocked) {
-    head = `<div class="notice err">送信できませんでした：${h(dr.blocked)}<br>入力した値はこの端末に残っています。「作業を再開」でロックを取り直すと送信できます。</div>`;
+    // ほかの人が完了させていたら「修正のため再開」（作業開始ではロックを取れないため）。どちらの内容を使うかは開始のときに聞く
+    const done = d.status === ST.DONE;
+    head = `<div class="notice err">送信できませんでした：${h(dr.blocked)}<br>入力した値はこの端末に残っています。「${done ? '修正のため再開する' : '作業を再開'}」でロックを取り直すと送信できます${d.status === ST.WORK && d.worker !== cfg.name ? `（今は ${h(d.worker)} さんが作業中のため、終わってから）` : ''}。</div>`;
     data = dr.data;
-    actions = `<button class="btn primary" data-act="start">作業を再開</button>`;
+    actions = done ? `<button class="btn primary" data-act="reopen">修正のため再開する</button>` : `<button class="btn primary" data-act="start">作業を再開</button>`;
+  } else if (mine && !dr) {
+    head = `<div class="notice work">あなたの名前で作業中ですが、この端末では作業を開始していません（別の端末で作業中か、アプリを入れ直した等）。この端末で続けるときは「この端末で作業を続ける」を押してください（別の端末からは送れなくなります）。</div>`;
+    data = normalize(d, d.data);
+    actions = `<button class="btn primary" data-act="start">この端末で作業を続ける</button>`;
   } else if (mine) {
     if (dr.finish && dr.pending) head = `<div class="notice work">完了済み（未送信）。電波が戻ると自動で送信されます。</div>`;
     data = dr.data;
@@ -1532,7 +1608,7 @@ function renderDetail() {
     actions = `<button class="btn warn" data-act="release" style="flex:1">作業を中断</button><button class="btn ok" data-act="finish" style="flex:2">完了して送信</button>`;
   } else if (d.status === ST.WORK) {
     head = `<div class="notice work"><b>${h(d.worker)}</b> さんが作業中です（${h(hm(d.startedAt))} 開始）。入力はできません。</div>`;
-    data = d.data ? normalize(d, d.data) : null;
+    data = d.data || view.browse ? normalize(d, d.data) : null;
     actions = `<button class="btn warn" data-act="force">強制解除（放置されている場合）</button>`;
   } else if (d.status === ST.DONE) {
     // 反映した後に直して再び完了したもの（updatedAt が新しい）は、まだ反映されていない
@@ -1545,7 +1621,9 @@ function renderDetail() {
     head = st.cls === 'wait' || st.cls === 'temp'
       ? `<div class="notice">${h(st.text)}：${h(d.worker)} さんが途中まで入力して中断しています（${h(hm(d.updatedAt))}）。「作業開始」で続きから入力できます。</div>`
       : `<div class="notice">この機器は未着手です。「作業開始」を押すと、他の人は入力できなくなります。</div>`;
-    data = d.data ? normalize(d, d.data) : null;
+    // 閲覧：入力欄も見るだけで表示する（前回値などを確かめる用。ロックは取らない）
+    if (view.browse) head = `<div class="notice">閲覧中です（入力はできません。ほかの人も作業できます）。入力するときは「作業開始」を押してください。</div>` + head;
+    data = d.data || view.browse ? normalize(d, d.data) : null;
     actions = `<button class="btn primary" data-act="start">作業開始</button>`;
   }
 
@@ -1686,17 +1764,67 @@ function updateDevs(d, data) {
 }
 
 // ---- 操作 ----
+// 一覧で機器を押したとき：未着手・一時保存の機器は「作業開始」か「閲覧」を選ぶ
+//   自分が作業中・この端末に未送信や送信できなかった入力がある機器は、そのまま開く。ほかの人が作業中・完了済みは閲覧で開く（画面の下に強制解除・再開）
+async function openDevice(id) {
+  const d = getDev(id);
+  if (!d) return;
+  const dr = drafts[id];
+  const mine = d.status === ST.WORK && d.worker === cfg.name;
+  let mode = (mine && dr) || (dr && (dr.pending || dr.blocked)) ? 'work' : 'view';
+  if (mode === 'view' && d.status !== ST.WORK && d.status !== ST.DONE && !mine) {
+    const c = await choose(`${d.tag}\nどちらにしますか？`, [
+      { key: 'start', label: '作業開始（入力する。ほかの人は入力できなくなります）', cls: 'primary' },
+      { key: 'view', label: '閲覧（見るだけ。ほかの人も作業できます）' },
+      { key: 'cancel', label: 'キャンセル' },
+    ]);
+    if (c !== 'start' && c !== 'view') return;
+    mode = c;
+  }
+  Object.assign(view, { from: view.screen, screen: 'detail', id, details: false, partsEdit: false, testsEdit: false, showMissing: false, browse: mode === 'view' });
+  render();
+  window.scrollTo(0, 0);
+  if (mode === 'start') await startWork(false);
+}
+
+// 作業開始：端末に入力が残っている場合は、サーバーの内容とどちらを使うか決める
+//   ・端末の入力が未送信で、サーバーがその後に変わっていない → 端末の入力で続ける（送信していない分を失わない）
+//   ・サーバーがその後に変わっている（ほかの人が入力・完了した等）→ どちらを使うか聞く（初めはサーバーの内容）
+//   ・端末の入力が送信済み（未送信なし）→ サーバーの内容で始める（端末の古い入力は使わない）
+//   ＝ 強制解除のあと、端末に残った古い（空の）入力で、ほかの人の入力を上書きしてしまう不具合の対策
 async function startWork(reopen) {
   const id = view.id;
   try {
     const j = await withBusy('作業開始中…', () => api('start', { id, reopen: !!reopen }));
     updateDevice(j.device);
+    view.browse = false;
     const dr = drafts[id];
-    if (dr) {
-      dr.blocked = null;  // 端末に残っている入力を優先して続ける
-      if (dr.pending) scheduleSync(500);
+    const serverJson = JSON.stringify(j.device.data == null ? null : j.device.data);
+    const fromServer = () => ({ data: normalize(j.device, j.device.data), rev: 0, pending: false, lock: j.device.startedAt, base: j.device.updatedAt, sentJson: serverJson });
+    if (dr && dr.pending) {
+      const prev = j.prevUpdatedAt != null ? String(j.prevUpdatedAt) : null;
+      // サーバーの内容が、この端末から最後に届いた内容と同じか（強制解除だけなら中身は変わらないので、聞かずに端末の入力で続ける）。
+      //   届いた内容の控えが無い（この版より前に作った入力）ときは日時で比べ、それも無ければ聞く
+      const serverChanged = dr.sentJson != null ? serverJson !== dr.sentJson
+        : prev != null && prev !== '' && (!dr.base || prev > String(dr.base));
+      let useLocal = !serverChanged;
+      if (serverChanged) {
+        useLocal = (await choose(`この端末に、送信していない入力が残っています。\nただし、その後にサーバーの内容が変わっています（${hm(prev)}）。どちらを使いますか？`, [
+          { key: 'server', label: 'サーバーの内容を使う（この端末の入力は捨てる）', cls: 'primary' },
+          { key: 'local', label: 'この端末の入力を使う（サーバーの内容を上書き）', cls: 'warn' },
+        ])) === 'local';
+        if (useLocal && !confirm('サーバーの内容（ほかの人の入力を含む場合があります）を、この端末の入力で上書きします。よろしいですか？')) useLocal = false;
+      }
+      if (useLocal) {
+        // finish は外す（前に押した「完了」を、確かめないまま送らない。入力を見直して、もう一度「完了して送信」を押す）
+        Object.assign(dr, { blocked: null, lock: j.device.startedAt, finish: false });
+        dr.data = normalize(j.device, dr.data);
+        scheduleSync(500);
+      } else {
+        drafts[id] = fromServer();
+      }
     } else {
-      drafts[id] = { data: normalize(j.device, j.device.data), rev: 0, pending: false };
+      drafts[id] = fromServer();
     }
     saveDrafts();
   } catch (e) {
@@ -1735,8 +1863,9 @@ async function releaseWork() {
   try {
     const dr = drafts[id];
     const j = await withBusy('中断しています…', async () => {
-      if (c === 'save' && dr && dr.pending) await api('save', { id, data: dr.data, finish: false });
-      return api('release', { id, discard: c === 'discard' });
+      const lock = (dr && dr.lock) || '';
+      if (c === 'save' && dr && dr.pending) await api('save', { id, data: dr.data, finish: false, lock });
+      return api('release', { id, discard: c === 'discard', lock });
     });
     updateDevice(j.device);
     delete drafts[id];
@@ -1764,7 +1893,8 @@ async function forceRelease() {
 //   何を対象にするかは機器種類の設定（〇〇Req）で決まる（出していない要素は対象外）
 function findMissing(d, data) {
   const keys = [];
-  if (opt(d, 'pointsReq')) data.ch.forEach((c, k) => {
+  // 測定値は必ず入力（空欄があると送信できない。機器種類の設定でも外せない）
+  data.ch.forEach((c, k) => {
     const pairs = c.adj ? [['up', 'down'], ['adjUp', 'adjDown']] : [['up', 'down']];
     pairs.forEach(([u, dn]) => {
       for (let i = 0; i < 5; i++) {
@@ -1824,9 +1954,20 @@ function markMissing() {
 async function finishWork() {
   const d = getDev(view.id);
   const dr = drafts[view.id];
+  if (!d || !dr || dr.blocked) { renderDetail(); return; }  // 下書きが無い・送れない状態なら、今の状態の画面にする
   const over = splitNote(dr.data.note, d.info.noteCaps || DEFAULT_NOTE_CAPS).length - (d.info.noteCaps || DEFAULT_NOTE_CAPS).length;
   if (over > 0 && !confirm(`記事が記事欄に入りきりません（${over} 行はみ出し）。はみ出した分はExcelに書き込まれません。このまま完了にしますか？`)) return;
   const m = findMissing(d, dr.data);
+  // 測定値の空欄があるときは送信できない（ほかの項目は確認のうえ送信できる）
+  const meas = m.keys.filter(k => k.startsWith('ch.')).length;
+  if (meas) {
+    view.showMissing = true;
+    markMissing();
+    alert(`測定値が ${meas} か所入力されていません（赤枠の箇所）。\n測定値をすべて入力しないと送信できません。${dr.data.ch.some(c => c.adj) ? '\n「調整した」にチェックがある場合は、調整後の値も必要です。' : ''}`);
+    const first = document.querySelector('.missing');
+    if (first) first.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
   if (m.msg.length) {
     view.showMissing = true;
     markMissing();
@@ -1836,10 +1977,27 @@ async function finishWork() {
       return;
     }
   } else if (!confirm('完了にして送信します。よろしいですか？')) return;
+  const id = view.id;
   dr.finish = true;
-  touchDraft(view.id);
-  await withBusy('送信しています…', () => sync());
-  alert(drafts[view.id] ? 'この端末に保存しました。電波が戻ると自動で送信されます。' : '送信しました。');
+  touchDraft(id);
+  finishing = true;
+  try {
+    await withBusy('送信しています…', async () => {
+      // 自動の送信が途中なら、終わるのを待ってから送る（待たないと、電波があるのに「あとで送信」と出るため）
+      for (let i = 0; syncing && i < 300; i++) await new Promise(r => setTimeout(r, 100));
+      await sync();
+    });
+  } finally { finishing = false; }
+  const left = drafts[id];
+  if (left && left.blocked) {
+    // サーバーに拒否された（強制解除・ほかの人が作業中・別の端末で開始 等）：自動では送られないので、はっきり知らせて画面に残る
+    left.finish = false;
+    saveDrafts();
+    alert(`送信できませんでした：${left.blocked}\n入力した値はこの端末に残っています。画面の案内に従って作業を再開してから、もう一度「完了して送信」を押してください。`);
+    renderDetail();
+    return;
+  }
+  alert(left ? 'この端末に保存しました（今は送信できません）。電波が戻ると自動で送信されます。' : '送信しました。');
   leaveDetail();
   render();
 }
@@ -1952,7 +2110,8 @@ document.addEventListener('click', async e => {
   }
   else if (act === 'filter') { view.filter = b.dataset.f; store.set('filter', view.filter); render(); }
   else if (act === 'refresh') withBusy('更新しています…', () => refresh());
-  else if (act === 'open') { view.from = view.screen; view.screen = 'detail'; view.id = b.dataset.id; view.details = false; view.partsEdit = false; view.testsEdit = false; view.showMissing = false; render(); window.scrollTo(0, 0); }
+  else if (act === 'open') openDevice(b.dataset.id);
+  else if (act === 'seal') toggleSeal(b.dataset.id);
   else if (act === 'start') startWork(false);
   else if (act === 'reopen') { if (confirm('完了済みの機器を修正のため再開します。よろしいですか？')) startWork(true); }
   else if (act === 'release') releaseWork();
