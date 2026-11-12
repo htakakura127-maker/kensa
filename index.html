@@ -326,8 +326,9 @@ const DEFAULT_CONFIG = /*CONFIG_DEFAULT_BEGIN*/{
     { "key": "c47", "name": "C47系（C46 など）", "prefixes": ["C45", "C46", "C47"] }
   ]
 }/*CONFIG_DEFAULT_END*/;
-const COND_FIELDS = { name: '名称', model: '型番', serial: '製造番号', loc: '据付場所', sheet: 'シート名', file: '報告書名' };
-const COND_OPS = { contains: 'を含む', notContains: 'を含まない', startsWith: 'で始まる', digits: 'が次の桁数の数字', empty: 'が空', notEmpty: 'が空でない' };
+// 条件に使える項目。tag＝貴社計器番号（一覧の見出し：計器は貴社計器番号、調節弁は調節弁番号、タッチパネルは設置場所＋タッチパネル）、plant＝工場名
+const COND_FIELDS = { name: '名称', model: '型番', serial: '製造番号', loc: '据付場所', sheet: 'シート名', file: '報告書名', plant: '工場名', tag: '貴社計器番号（一覧の見出し）' };
+const COND_OPS = { contains: 'を含む', notContains: 'を含まない', startsWith: 'で始まる', equals: 'と同じ', digits: 'が次の桁数の数字', empty: 'が空', notEmpty: 'が空でない' };
 
 // サーバーから来た設定が使える形か（だめなら初期値を使う）
 //   （手で直した設定などで形が崩れていても、入力画面が壊れないよう中まで確かめる。pc\check-read.ps1 の Test-ValidConfig も同じ）
@@ -352,8 +353,10 @@ function validConfig(c) {
     okSub(e.read, ['cell']) && okSub(e.write, ['cell', 'empty', 'on', 'off']) && okSub(e.note, ['template']);
   if (c.customs != null && !(Array.isArray(c.customs) && c.customs.every(okCustom) && new Set(c.customs.map(e => e.id)).size === c.customs.length)) return null;
   // 追加した手順（procs）：{ key, label, cat（fix 修正／check 確認／inspect 点検）, bases（様式） }
+  //   when：この手順だけの条件（機器種類と関係なく、当てはまる機器にボタンを出す。工場名・貴社計器番号などでピンポイントに選ぶ用）
+  const okWhen = w => w == null || (Array.isArray(w) && w.every(x => isObj(x) && typeof x.field === 'string' && typeof x.op === 'string' && (x.values == null || isStrArr(x.values))));
   const okProc = p => isObj(p) && typeof p.key === 'string' && /^[a-z0-9_]+$/.test(p.key) && !Object.keys(MANUAL_PROCS).includes(p.key) && !RESERVED.includes(p.key) &&
-    typeof p.label === 'string' && (p.cat == null || Object.keys(PROC_CATS).includes(p.cat)) && (p.bases == null || (isStrArr(p.bases) && p.bases.every(b => Object.values(KIND).includes(b))));
+    typeof p.label === 'string' && (p.cat == null || Object.keys(PROC_CATS).includes(p.cat)) && (p.bases == null || (isStrArr(p.bases) && p.bases.every(b => Object.values(KIND).includes(b)))) && okWhen(p.when);
   if (c.procs != null && !(Array.isArray(c.procs) && c.procs.every(okProc) && new Set(c.procs.map(p => p.key)).size === c.procs.length)) return null;
   return c;
 }
@@ -418,7 +421,8 @@ const nk = s => String(s == null ? '' : s).normalize('NFKC').trim().toUpperCase(
 const patRe = p => new RegExp('^' + nk(p).replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/#/g, '[0-9]'));
 function condValue(d, f) {
   const i = d.info || {};
-  return f === 'name' ? (i.name || d.tag) : f === 'model' ? i.model : f === 'serial' ? i.serial : f === 'loc' ? i.loc : f === 'sheet' ? d.sheet : f === 'file' ? d.file : '';
+  return f === 'name' ? (i.name || d.tag) : f === 'model' ? i.model : f === 'serial' ? i.serial : f === 'loc' ? i.loc : f === 'sheet' ? d.sheet : f === 'file' ? d.file
+    : f === 'plant' ? d.plant : f === 'tag' ? d.tag : '';
 }
 function testCond(d, c) {
   const v = nk(condValue(d, c.field));
@@ -429,6 +433,7 @@ function testCond(d, c) {
   if (c.op === 'contains') return vals.some(x => v.includes(x));
   if (c.op === 'notContains') return !vals.some(x => v.includes(x));
   if (c.op === 'startsWith') return vals.some(x => patRe(x).test(v));
+  if (c.op === 'equals') return vals.some(x => v === x);
   if (c.op === 'digits') return vals.some(n => /^[0-9]+$/.test(n) && new RegExp(`^[0-9]{${+n}}$`).test(v));
   return false;
 }
@@ -1060,10 +1065,15 @@ const procsButtonLabel = procs => {
 const recSuffix = d => /記録計/.test((d.info && d.info.name) || d.tag || '') ? '（記録計）' : '';
 // その機器で見られる手順（設定の機器種類の manual。輝度調整はタッチパネル、PVフィルタ・バイアスは計器だけ。調節弁には無い）
 //   追加した手順（設定の procs）は、その手順の様式（bases。空ならどの様式でも）の機器だけ
+//   追加した手順に「この手順の条件」（when）があれば、機器種類と関係なく、条件にすべて当てはまる機器にも出す（工場名・貴社計器番号などでピンポイントに）
+const procBaseOk = (p, d) => !(p.bases || []).length || p.bases.includes(d.kind);
+const procWhenMatches = (p, d) => (p.when || []).length > 0 && procBaseOk(p, d) && p.when.every(c => testCond(d, c));
 function manualProcs(d) {
-  return (typeOf(d).manual || []).filter(p => MANUAL_PROCS[p]
+  const list = (typeOf(d).manual || []).filter(p => MANUAL_PROCS[p]
     ? d.kind !== KIND.VALVE && (p !== 'brightness' || d.kind === KIND.TOUCH) && (p !== 'bias' || d.kind === KIND.KEIKI)
-    : !!customProc(p) && (!(customProc(p).bases || []).length || customProc(p).bases.includes(d.kind)));
+    : !!customProc(p) && procBaseOk(customProc(p), d));
+  (appConfig.procs || []).forEach(p => { if (!list.includes(p.key) && procWhenMatches(p, d)) list.push(p.key); });
+  return list;
 }
 // 手順画像のシリーズ（設定の series。型番の先頭で判定）
 const seriesOf = model => {
@@ -2704,7 +2714,7 @@ if (PREVIEW) {
       const result = (m.devices || []).map(d => {
         const t = typeOf(d);
         const models = d.kind === KIND.TOUCH ? (d.info.panels || []).map(p => p.model) : [d.info && d.info.model];
-        return { id: d.id, type: t.id, typeName: t.name, series: models.map(x => (seriesOf(x) || {}).key || '') };
+        return { id: d.id, type: t.id, typeName: t.name, series: models.map(x => (seriesOf(x) || {}).key || ''), procs: manualProcs(d) };
       });
       appConfig = saved;
       e.source.postMessage({ type: 'classified', seq: m.seq, result }, MSG_TARGET);

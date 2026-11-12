@@ -278,6 +278,7 @@ function condText(c) {
     case 'contains': return `${f}に${q}を含む`;
     case 'notContains': return `${f}に${q}を含まない`;
     case 'startsWith': return `${f}が${q}で始まる`;
+    case 'equals': return `${f}が${q}と同じ`;
     case 'digits': return `${f}が${vals.join('か')}桁の数字`;
     case 'empty': return `${f}が空`;
     case 'notEmpty': return `${f}が空でない`;
@@ -291,7 +292,6 @@ function renderLeft() {
   const tabs = `<div class="tabs"><button class="${S.tab === 'types' ? 'on' : ''}" data-act="tab" data-t="types">機器種類</button>
     <button class="${S.tab === 'customs' ? 'on' : ''}" data-act="tab" data-t="customs">追加した要素</button>
     <button class="${S.tab === 'series' ? 'on' : ''}" data-act="tab" data-t="series">手順と画像</button>
-    <button class="${S.tab === 'photos' ? 'on' : ''}" data-act="tab" data-t="photos">機器の写真</button>
     <button class="${S.tab === 'history' ? 'on' : ''}" data-act="tab" data-t="history">履歴</button></div>`;
   const pubTypes = (effPublished() || {}).types || [];
   // 様式（計器・タッチパネル・調節弁）ごとにまとめ、› を押すと中の種類を開く（判定の順は様式の中の上から順）
@@ -472,6 +472,16 @@ function seriesMidHtml() {
         <div class="row"><label>様式</label>${KIND_ORDER.map(k => `<label><input type="checkbox" data-pbase="${h(k)}" ${(cp.bases || []).includes(k) ? 'checked' : ''}> ${h(k)}</label>`).join(' ')}
           <span class="muted">（どれもチェックしない＝すべての様式）</span></div>
         <div class="row"><label>キー</label><code>${h(cp.key)}</code><span class="muted">画像の名前に使います（シリーズのキー-${h(cp.key)}）</span></div>`}
+      ${p.builtin ? '' : `<h3>この手順の条件（ピンポイントで選ぶ） <span class="muted">すべて満たす機器に、機器種類と関係なくボタンを出す。1つの欄に「、」で複数書くと「どれか」</span></h3>
+        ${(cp.when || []).map((c, ci) => `<div class="cond-row">
+          <select data-pcf="${ci}" data-k="field">${Object.entries(S.defs.condFields).map(([k, v]) => `<option value="${k}" ${c.field === k ? 'selected' : ''}>${h(v)}</option>`).join('')}</select>
+          <select data-pcf="${ci}" data-k="op">${Object.entries(S.defs.condOps).map(([k, v]) => `<option value="${k}" ${c.op === k ? 'selected' : ''}>${h(v)}</option>`).join('')}</select>
+          <input data-pcf="${ci}" data-k="values" value="${h((c.values || []).join('、'))}" placeholder="${c.field === 'plant' ? '例：楠本化成 鹿島工場' : c.field === 'tag' ? '例：TIC-901　温水温度指示調節計' : '値'}" ${['empty', 'notEmpty'].includes(c.op) ? 'disabled' : ''}>
+          <button class="small del" data-act="delPCond" data-ci="${ci}">×</button></div>`).join('') || '<p class="muted">条件なし（機器種類で選んだ機器だけに出す）</p>'}
+        <button class="small" data-act="addPCond">＋ 条件を追加</button>
+        <div class="muted" id="proc-cond" style="margin-top:4px">${h(procWhenText(cp))}</div>`}
+      <h3>この手順のボタンが出る機器（<span id="proc-devn">${procDevs(p.key).length}</span> 台）</h3>
+      <div class="devlist" id="proc-devs">${devHtml(procDevs(p.key))}</div>
       <h3>この手順のボタンを出す機器種類</h3>
       ${types.map(t => `<label style="margin-right:14px;display:inline-block"><input type="checkbox" data-ptype="${h(t.id)}" ${(t.manual || []).includes(p.key) ? 'checked' : ''}> <span class="badge b-${h(t.base)}">${h(t.base)}</span>${h(t.name)}（${devCount(t.id)} 台）</label>`).join('') || '<span class="muted">この手順を出せる機器種類がありません</span>'}
       <h3>画像（シリーズごと）</h3>
@@ -509,9 +519,20 @@ function seriesMidHtml() {
 }
 const devHtml = devs => devs.map(d => `<div><span class="badge b-${h(d.kind)}">${h(d.kind)}</span>${h(d.tag)}　<span class="muted">${h(d.sheet)}　${h(d.info && (d.kind === 'タッチパネル' ? (d.info.panels || []).map(p => p.model).join('／') : d.info.model) || '')}</span></div>`).join('') || '<span class="muted">なし</span>';
 const builtinOk = (k, base) => base !== '調節弁' && (k !== 'brightness' || base === 'タッチパネル') && (k !== 'bias' || base === '計器');
+// 手順のボタンが出る機器（機器種類で選んだもの＋この手順の条件に当てはまるもの。判定は iPhone アプリと同じ計算）
+const procDevs = key => S.devices.filter(d => ((S.classDraft[d.id] || {}).procs || []).includes(key));
+const procWhenText = cp => (cp.when || []).length ? '今の条件：' + (cp.bases && cp.bases.length ? `様式が${cp.bases.join('か')}で、` : '') + cp.when.map(condText).filter(Boolean).join('、かつ ') : '';
 // 入力欄は作り直さず、当てはまる機器と条件の文だけ書き直す
 function renderSeriesLive() {
   const M = S.mx;
+  if (M.sel && M.sel.t === 'proc') {
+    const devs = procDevs(M.sel.key);
+    const a = $('#proc-devs'); if (a) a.innerHTML = devHtml(devs);
+    const n = $('#proc-devn'); if (n) n.textContent = devs.length;
+    const cp = (S.draft.procs || []).find(x => x.key === M.sel.key);
+    const c = $('#proc-cond'); if (c && cp) c.textContent = procWhenText(cp);
+    return;
+  }
   if (!M.sel || M.sel.t !== 'series') return;
   const s = (S.draft.series || [])[M.sel.i];
   if (!s) return;
@@ -882,7 +903,13 @@ function validate() {
     if (s.key === 'common') errs.push('シリーズのキー「common」は共通の画像に使うため使えません');
     keys.add(s.key);
   });
-  (S.draft.procs || []).forEach((p, i) => { if (!String(p.label || '').trim()) errs.push(`追加した手順 ${i + 1} 番目に名前がありません`); });
+  (S.draft.procs || []).forEach((p, i) => {
+    if (!String(p.label || '').trim()) errs.push(`追加した手順 ${i + 1} 番目に名前がありません`);
+    (p.when || []).forEach(c => {
+      if (!['empty', 'notEmpty'].includes(c.op) && !(c.values || []).some(v => String(v).trim())) errs.push(`手順「${p.label}」に値の入っていない条件があります`);
+      if (c.op === 'digits' && (c.values || []).some(v => !/^[0-9]+$/.test(String(v).trim()))) errs.push(`手順「${p.label}」の桁数は数字で入れてください`);
+    });
+  });
   return errs;
 }
 function showClassify(publishMode) {
@@ -1009,6 +1036,14 @@ document.addEventListener('click', async e => {
     const key = 'p' + Date.now().toString(36);
     P.push({ key, label: '点検手順', cat: 'inspect', bases: [] });
     S.mx.sel = { t: 'proc', key }; renderLeft(); renderMid(); changed();
+  }
+  else if (act === 'addPCond' || act === 'delPCond') {
+    const p = S.mx.sel && (S.draft.procs || []).find(x => x.key === S.mx.sel.key);
+    if (!p) return;
+    p.when = p.when || [];
+    if (act === 'addPCond') p.when.push({ field: 'tag', op: 'equals', values: [] }); else p.when.splice(+b.dataset.ci, 1);
+    if (!p.when.length) delete p.when;
+    renderMid(); changed();
   }
   else if (act === 'delProc') {
     const k = S.mx.sel && S.mx.sel.key;
@@ -1143,6 +1178,12 @@ document.addEventListener('input', e => {
     changed(); renderLeftSoon();
     return;
   }
+  // 追加した手順の条件の値（入力中は欄を作り直さない）
+  if (t.dataset.pcf != null && t.dataset.k === 'values' && S.draft && S.mx.sel && S.mx.sel.t === 'proc') {
+    const p = (S.draft.procs || []).find(x => x.key === S.mx.sel.key);
+    if (p && p.when && p.when[+t.dataset.pcf]) { p.when[+t.dataset.pcf].values = t.value.split(/[、,，]/).map(s => s.trim()).filter(Boolean); changed(); }
+    return;
+  }
   // 追加した手順の名前
   if (t.dataset.pf === 'label' && S.draft && S.mx.sel && S.mx.sel.t === 'proc') {
     const p = (S.draft.procs || []).find(x => x.key === S.mx.sel.key);
@@ -1171,6 +1212,16 @@ document.addEventListener('change', e => {
   if (t.id === 'pvdev' || t.id === 'pvmode' || t.id === 'pvdetails') { updatePreview(); return; }
   if (t.dataset.phadd) { const files = [...(t.files || [])]; t.value = ''; addPhotoFiles(t.dataset.phadd, files); return; }
   if (t.dataset.mxadd) { const files = [...(t.files || [])]; t.value = ''; addManualFiles(t.dataset.mxadd, files); return; }
+  // 追加した手順の条件の項目・比べ方
+  if (t.dataset.pcf != null && (t.dataset.k === 'field' || t.dataset.k === 'op') && S.draft && S.mx.sel && S.mx.sel.t === 'proc') {
+    const p = (S.draft.procs || []).find(x => x.key === S.mx.sel.key);
+    const c = p && p.when && p.when[+t.dataset.pcf];
+    if (!c) return;
+    c[t.dataset.k] = t.value;
+    if (t.dataset.k === 'op' && ['empty', 'notEmpty'].includes(t.value)) c.values = [];
+    renderMid(); changed();
+    return;
+  }
   // 追加した手順の分類・様式、手順を出す機器種類
   if ((t.dataset.pf || t.dataset.pbase) && S.draft && S.mx.sel && S.mx.sel.t === 'proc') {
     const p = (S.draft.procs || []).find(x => x.key === S.mx.sel.key);
