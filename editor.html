@@ -211,7 +211,7 @@ async function reclassify() {
   S.classDraft = await classify(S.draft);
   S.classPub = await classify(effPublished());
   // シリーズの表は入力欄があるので作り直さない（入力中の文字が消えるため）。数だけ右の表で更新する。履歴は作り直さない（サーバーに聞き直さない）
-  if (S.tab === 'series') { renderMid(); checkImages(); }
+  if (S.tab === 'series') { renderLeft(); renderSeriesLive(); }
   else if (S.tab === 'types') { renderLeft(); renderMidLive(); }
   renderPvDevices();
 }
@@ -290,8 +290,8 @@ function renderLeft() {
   if (!S.loaded) return;
   const tabs = `<div class="tabs"><button class="${S.tab === 'types' ? 'on' : ''}" data-act="tab" data-t="types">機器種類</button>
     <button class="${S.tab === 'customs' ? 'on' : ''}" data-act="tab" data-t="customs">追加した要素</button>
-    <button class="${S.tab === 'series' ? 'on' : ''}" data-act="tab" data-t="series">手順画像のシリーズ</button>
-    <button class="${S.tab === 'photos' ? 'on' : ''}" data-act="tab" data-t="photos">写真・画像</button>
+    <button class="${S.tab === 'series' ? 'on' : ''}" data-act="tab" data-t="series">手順と画像</button>
+    <button class="${S.tab === 'photos' ? 'on' : ''}" data-act="tab" data-t="photos">機器の写真</button>
     <button class="${S.tab === 'history' ? 'on' : ''}" data-act="tab" data-t="history">履歴</button></div>`;
   const pubTypes = (effPublished() || {}).types || [];
   // 様式（計器・タッチパネル・調節弁）ごとにまとめ、› を押すと中の種類を開く（判定の順は様式の中の上から順）
@@ -333,8 +333,8 @@ function groupHtml(scope, items, baseOf, row, count, selBase) {
 
 function renderMid() {
   if (!S.loaded) return;
-  if (S.tab === 'series') { $('#mid').innerHTML = seriesHelp(); return; }
-  if (S.tab === 'photos') { $('#mid').innerHTML = photosMidHtml(); showStatic(); return; }
+  if (S.tab === 'series') { $('#mid').innerHTML = seriesMidHtml(); showStaticAll(); return; }
+  if (S.tab === 'photos') { $('#mid').innerHTML = photosMidHtml(); return; }
   if (S.tab === 'customs') { $('#mid').innerHTML = customMidHtml(); return; }
   if (S.tab === 'history') { $('#mid').innerHTML = `<div class="card"><h2>履歴について</h2><p class="muted">本番に反映するたびに新しい版として残ります。「この版に戻す」で、その版をすぐ本番にできます（iPhone は次に一覧を更新したときに切り替わります）。「編集に読み込む」は下書きに読み込むだけで、本番は変わりません。</p></div>`; return; }
   const t = S.draft.types[S.sel];
@@ -372,7 +372,8 @@ function renderMid() {
       <span>【追加】${h(c.label || '（名前なし）')}</span><button class="q" data-act="info" data-k="c:${h(c.id)}">説明</button></div>
       ${S.open['c:' + c.id] ? customInfo(c) : ''}</div>`;
   }).join('');
-  const procs = Object.entries(D.procs).filter(([k]) => base !== '調節弁' && (k !== 'brightness' || base === 'タッチパネル') && (k !== 'bias' || base === '計器'));
+  // 手順：もとからある手順（様式で決まる）と、追加した手順（その手順の様式のもの）
+  const procs = allProcs().filter(p => p.builtin ? builtinOk(p.key, base) : procOkForBase(p, base)).map(p => [p.key, p.label + (p.builtin ? '' : '（追加）'), p.cat]);
   const fixed = S.elements.filter(e => (e.kinds || []).includes(base) && !TOGGLE_ELS.includes(e.id));
   $('#mid').innerHTML = `<div class="card">
     <h2>機器種類の設定</h2>
@@ -390,7 +391,7 @@ function renderMid() {
     ${cRows ? `<div class="muted" style="margin-top:8px">追加した要素（「追加した要素」タブで作ったもの）</div>${cRows}` : ''}
     <h3>手順ボタン（修正手順・確認手順） <button class="q" data-act="info" data-k="fixed:manual">説明</button></h3>
     ${S.open['fixed:manual'] ? `<div class="el">${elInfo('manual', base)}</div>` : ''}
-    ${procs.length ? procs.map(([k, v]) => `<label style="margin-right:14px"><input type="checkbox" data-proc="${k}" ${(t.manual || []).includes(k) ? 'checked' : ''}> ${h(v)}</label>`).join('') : '<span class="muted">この様式には手順ボタンがありません</span>'}
+    ${procs.length ? procs.map(([k, v, c]) => `<label style="margin-right:14px"><input type="checkbox" data-proc="${k}" ${(t.manual || []).includes(k) ? 'checked' : ''}> ${h(v)} <span class="muted">${h(catName(c))}</span></label>`).join('') : '<span class="muted">この様式には手順ボタンがありません</span>'}
     <p class="muted">画像は型番のシリーズごと（「手順画像のシリーズ」のタブ）。時刻合わせだけなら押すとすぐ表示、それ以外は手順を選んでから表示します。</p>
     <h3>常に出る要素（この様式では切り替えられません）</h3>
     ${fixed.map(e => `<div class="el"><div class="lb"><span>・${h(e.name)}</span><button class="q" data-act="info" data-k="fixed:${e.id}">説明</button></div>${S.open['fixed:' + e.id] ? elInfo(e.id, base) : ''}</div>`).join('')}
@@ -411,33 +412,162 @@ function elInfo(id, base) {
   return `<div class="info"><div>要素</div><div><b>${h(e.name)}</b></div>${Object.keys(lbl).map(k => v(k) ? `<div>${lbl[k]}</div><div>${v(k)}</div>` : '').join('')}</div>`;
 }
 
-// ---- 手順画像のシリーズ ----
+// ---- 手順と画像（手順の種類・シリーズ＝型番の先頭で決まる機種のまとまり・手順画像）----
+//   画像の名前（キー）は「シリーズのキー-手順のキー」。シリーズの画像が無い機種・シリーズに当てはまらない機種には「common-手順のキー」（共通）の画像を出す
+//   手順・シリーズは設定（下書き→本番に反映）。画像は追加・削除するとすぐサーバーに入る（パスワードが必要）
+const BUILTIN_BASES = { brightness: ['タッチパネル'], clock: ['計器', 'タッチパネル'], bias: ['計器'] };
+const catName = c => (S.defs.procCats || { fix: '修正手順', check: '確認手順', inspect: '点検手順' })[c] || '点検手順';
+// 手順の一覧：もとからある3つ＋追加した手順。{ key, label, cat, bases, builtin }
+function allProcs() {
+  const bc = S.defs.builtinCat || { brightness: 'fix', clock: 'fix', bias: 'check' };
+  return Object.entries(S.defs.procs).map(([key, label]) => ({ key, label, cat: bc[key], bases: BUILTIN_BASES[key] || [], builtin: true }))
+    .concat((S.draft.procs || []).map(p => ({ key: p.key, label: p.label, cat: p.cat || 'inspect', bases: p.bases || [], builtin: false })));
+}
+const procBasesText = p => (p.bases && p.bases.length ? p.bases.join('・') : 'すべての様式');
+const procOkForBase = (p, base) => !p.bases || !p.bases.length || p.bases.includes(base);
+S.mx = { sel: null, imgs: null, err: '' };   // sel：{ t:'proc', key } ／ { t:'series', i } ／ { t:'common' }
+const imgCount = key => ((S.manualImgs || {})[key] || []).length;
+const seriesDevs = key => S.devices.filter(d => ((S.classDraft[d.id] || {}).series || []).includes(key));
+const prefixText = s => (s.prefixes || []).filter(x => String(x).trim()).length ? `型番が${(s.prefixes || []).filter(x => String(x).trim()).map(x => `「${x}」`).join('か')}で始まる` : '（条件なし＝どの型番も当てはまらない）';
+
 function seriesHtml() {
-  const list = S.draft.series || [];
-  return `<p class="muted">型番の先頭でシリーズを決め、手順の画像（GitHub の web/manual/<キー>-<手順>.png）を出します。# は数字1文字。上から順に、最初に当てはまったシリーズです。</p>
-    <table><tr><th>名前</th><th>キー</th><th>型番の先頭（、区切り）</th><th></th></tr>
-    ${list.map((s, i) => `<tr><td><input data-sf="${i}" data-k="name" value="${h(s.name)}" style="width:100%"></td>
-      <td><input data-sf="${i}" data-k="key" value="${h(s.key)}" style="width:90px"></td>
-      <td><input data-sf="${i}" data-k="prefixes" value="${h((s.prefixes || []).join('、'))}" style="width:100%"></td>
-      <td class="nav"><button class="small" data-act="upSeries" data-i="${i}">↑</button><button class="small del" data-act="delSeries" data-i="${i}">×</button></td></tr>`).join('')}
-    </table><button class="small" data-act="addSeries" style="margin-top:6px">＋ シリーズを追加</button>`;
+  const M = S.mx, procs = allProcs(), list = S.draft.series || [];
+  const on = (t, x) => M.sel && M.sel.t === t && (t === 'proc' ? M.sel.key === x : t === 'series' ? M.sel.i === x : true);
+  const procRow = p => `<div class="t dev ${on('proc', p.key) ? 'on' : ''}" data-act="mxproc" data-k="${h(p.key)}">
+      <span class="cnt">${h(catName(p.cat))}</span><div class="nm">${h(p.label || '（名前なし）')}${p.builtin ? '' : ' <span class="badge">追加</span>'}</div><div class="cond">${h(procBasesText(p))}</div></div>`;
+  const serGroup = (k, title, sub, i, keyBase) => {
+    const gk = 'mx:' + k;
+    const open = S.grp[gk] != null ? S.grp[gk] : (M.sel && ((M.sel.t === 'series' && M.sel.i === i) || (M.sel.t === 'common' && i == null)));
+    const total = procs.reduce((n, p) => n + imgCount(keyBase + '-' + p.key), 0);
+    return `<div class="grp" data-act="grp" data-g="${h(gk)}"><span class="arr">${open ? '▾' : '›'}</span>${h(title)}<span class="gc">${h(sub)}・画像 ${total} 枚</span></div>
+      ${open ? `<div class="grp-body"><div class="t dev ${i == null ? (on('common') ? 'on' : '') : (on('series', i) ? 'on' : '')}" data-act="${i == null ? 'mxcommon' : 'mxser'}" data-i="${i == null ? '' : i}">
+        <div class="nm">${i == null ? '共通の画像' : '条件と画像'}</div><div class="cond">${h(i == null ? 'シリーズの画像が無い機種・当てはまらない機種に出す' : prefixText(list[i]))}</div></div>
+        ${procs.map(p => `<div class="cond" style="margin:2px 0 2px 10px">${h(p.label)}：${imgCount(keyBase + '-' + p.key) ? '追加 ' + imgCount(keyBase + '-' + p.key) + ' 枚' : '―'}</div>`).join('')}</div>` : ''}`;
+  };
+  return `<p class="muted">手順ボタンで出す画像を、手順とシリーズ（型番の先頭で決まる機種のまとまり）ごとに登録します。どの機器に手順ボタンを出すかは「機器種類」タブ（またはここで手順を選んで）決めます。</p>
+    <h3 style="border:0;margin-top:4px;padding:0">手順</h3>
+    <div class="tlist">${procs.map(procRow).join('')}</div>
+    <button class="small" data-act="addProc">＋ 手順を追加</button>
+    <h3>シリーズ <span class="muted">上から順に、最初に当てはまったもの</span></h3>
+    <div class="tlist">${list.map((s, i) => serGroup('s' + i + ':' + s.key, s.name || '（名前なし）', `${s.key}・${seriesDevs(s.key).length} 台`, i, s.key)).join('')}
+      ${serGroup('common', '共通（どの機種でも）', 'common', null, 'common')}</div>
+    <div class="row"><button class="small" data-act="addSeries">＋ シリーズを追加</button>
+      <button class="small" data-act="upSeries">↑</button><button class="small" data-act="downSeries">↓</button><button class="small del" data-act="delSeries">削除</button>
+      <span class="muted">（選んでいるシリーズ）</span></div>`;
 }
-function seriesHelp() {
-  const list = S.draft.series || [];
-  const procs = S.defs.procs;
-  const use = key => S.devices.filter(d => ((S.classDraft[d.id] || {}).series || []).includes(key)).length;
-  return `<div class="card"><h2>シリーズごとの画像と当てはまる機器</h2>
-    <table><tr><th>シリーズ</th><th>当てはまる機器（台）</th>${Object.values(procs).map(p => `<th>${h(p)}</th>`).join('')}</tr>
-    ${list.map(s => `<tr><td>${h(s.name)}<div class="muted">${h(s.key)}</div></td><td>${use(s.key)}</td>
-      ${Object.keys(procs).map(p => `<td data-img="${h(s.key)}-${p}" class="muted">確認中…</td>`).join('')}</tr>`).join('')}</table>
-    <p class="muted">○＝画像あり（GitHub に上げた web/manual の中）。画像を足すときは「キー-clock.png」「キー-brightness.png」「キー-bias.png」の名前で置きます（2枚目以降は -2.png …）。</p></div>`;
+
+function seriesMidHtml() {
+  const M = S.mx, procs = allProcs();
+  if (!M.sel) return '<div class="card"><h2>手順と画像</h2><p class="muted">左で手順か、シリーズの › を押して「条件と画像」を選んでください。</p></div>';
+  if (M.sel.t === 'proc') {
+    const p = procs.find(x => x.key === M.sel.key);
+    if (!p) return '<div class="card"><p class="muted">その手順はありません。</p></div>';
+    const types = S.draft.types.filter(t => procOkForBase(p, t.base) && (!p.builtin || builtinOk(p.key, t.base)));
+    const cp = (S.draft.procs || []).find(x => x.key === p.key);
+    return `<div class="card"><h2>手順：${h(p.label || '（名前なし）')}</h2>
+      ${p.builtin ? `<p class="muted">もとからある手順です（名前・分類は変えられません）。分類：${h(catName(p.cat))}　様式：${h(procBasesText(p))}</p>`
+        : `<div class="row"><label>名前</label><input data-pf="label" value="${h(cp.label)}" style="flex:1" placeholder="例：点検手順（特殊な点検方法）"></div>
+        <div class="row"><label>分類（ボタンの名前）</label><select data-pf="cat">${Object.entries(S.defs.procCats || {}).map(([k, v]) => `<option value="${k}" ${k === (cp.cat || 'inspect') ? 'selected' : ''}>${h(v)}</option>`).join('')}</select>
+          <span class="muted">ボタンは分類をまとめた名前になります（例：修正・点検手順）</span></div>
+        <div class="row"><label>様式</label>${KIND_ORDER.map(k => `<label><input type="checkbox" data-pbase="${h(k)}" ${(cp.bases || []).includes(k) ? 'checked' : ''}> ${h(k)}</label>`).join(' ')}
+          <span class="muted">（どれもチェックしない＝すべての様式）</span></div>
+        <div class="row"><label>キー</label><code>${h(cp.key)}</code><span class="muted">画像の名前に使います（シリーズのキー-${h(cp.key)}）</span></div>`}
+      <h3>この手順のボタンを出す機器種類</h3>
+      ${types.map(t => `<label style="margin-right:14px;display:inline-block"><input type="checkbox" data-ptype="${h(t.id)}" ${(t.manual || []).includes(p.key) ? 'checked' : ''}> <span class="badge b-${h(t.base)}">${h(t.base)}</span>${h(t.name)}（${devCount(t.id)} 台）</label>`).join('') || '<span class="muted">この手順を出せる機器種類がありません</span>'}
+      <h3>画像（シリーズごと）</h3>
+      <table><tr><th>シリーズ</th><th>当てはまる機器</th><th>追加した画像</th></tr>
+        ${(S.draft.series || []).map((s, i) => `<tr class="imgcell" data-act="mxser" data-i="${i}"><td>${h(s.name)}<div class="muted">${h(s.key)}</div></td><td>${seriesDevs(s.key).length} 台</td><td>${imgCount(s.key + '-' + p.key) || '―'}</td></tr>`).join('')}
+        <tr class="imgcell" data-act="mxcommon"><td>共通（どの機種でも）<div class="muted">common</div></td><td>―</td><td>${imgCount('common-' + p.key) || '―'}</td></tr></table>
+      <p class="muted">行を押すと、そのシリーズの画像の画面になります。特定の1台だけの手順は、その機器だけに当てはまる機器種類を作って手順ボタンを出し、共通の画像を登録すると簡単です。</p>
+      ${p.builtin ? '' : '<div class="row" style="margin-top:10px"><button class="small del" data-act="delProc">この手順を削除</button></div>'}</div>`;
+  }
+  const common = M.sel.t === 'common';
+  const s = common ? null : (S.draft.series || [])[M.sel.i];
+  if (!common && !s) return '<div class="card"><p class="muted">そのシリーズはありません。</p></div>';
+  const keyBase = common ? 'common' : s.key;
+  const devs = common ? [] : seriesDevs(s.key);
+  const imgBlock = p => {
+    const key = keyBase + '-' + p.key;
+    const list = M.imgs && M.imgs[key];
+    return `<h3>${h(p.label || '（名前なし）')} <span class="muted">${h(catName(p.cat))}・${h(procBasesText(p))}　画像のキー ${h(key)}</span></h3>
+      <div class="row"><label>画像を追加</label><input type="file" accept="image/*" multiple data-mxadd="${h(key)}"></div>
+      ${M.err ? `<div class="errbox">${h(M.err)}</div>` : list == null ? '<p class="muted">読み込み中…</p>' : list.length ? `<div class="thumbs">${list.map(x => `<div class="th"><img src="${x.thumb ? 'data:image/jpeg;base64,' + x.thumb : ''}" data-act="phview" data-pid="${h(x.pid)}" alt="">
+        <div class="m"><span>${h(String(x.at).slice(5, 16).replace('-', '/'))}<br>${h(x.by || '')}</span><button class="small del" data-act="phdel" data-kind="manual" data-pid="${h(x.pid)}">削除</button></div></div>`).join('')}</div>` : '<p class="muted">追加した画像はありません</p>'}
+      <div class="thumbs" data-static="${h(key)}"></div>`;
+  };
+  return `<div class="card"><h2>${common ? '共通（どの機種でも）' : 'シリーズ：' + h(s.name || '（名前なし）')}</h2>
+    ${common ? '<p class="muted">シリーズの画像が無い機種や、どのシリーズにも当てはまらない機種には、ここの画像を出します（追加した手順を、機種に関係なく出したいときなど）。</p>'
+      : `<div class="row"><label>名前</label><input data-sf="${M.sel.i}" data-k="name" value="${h(s.name)}" style="flex:1"></div>
+      <div class="row"><label>キー</label><input data-sf="${M.sel.i}" data-k="key" value="${h(s.key)}" style="width:110px"><span class="muted">半角の小文字・数字・ - _ 。画像の名前に使うので、変えると前のキーで追加した画像は出なくなります</span></div>
+      <h3>条件</h3>
+      <div class="row"><label>型番の先頭</label><input data-sf="${M.sel.i}" data-k="prefixes" value="${h((s.prefixes || []).join('、'))}" style="flex:1" placeholder="例：GP4、C3#（# は数字1文字。、で区切ると「どれか」）"></div>
+      <div class="muted" id="ser-cond">今の条件：${h(prefixText(s))}（全角半角・大文字小文字は区別しない。上のシリーズに当てはまった機種は、ここには来ません）</div>
+      <h3>当てはまる機器（<span id="ser-devn">${devs.length}</span> 台）</h3>
+      <div class="devlist" id="ser-devs">${devHtml(devs)}</div>`}
+    <h3 style="margin-top:16px">手順ごとの画像 <span class="muted">追加した画像が、GitHub の web/manual の画像より優先して出ます（追加した順）</span></h3>
+    ${procs.map(imgBlock).join('')}</div>`;
 }
-function checkImages() {
-  document.querySelectorAll('[data-img]').forEach(td => {
-    const base = td.dataset.img;
-    const tryLoad = ext => new Promise(ok => { const im = new Image(); im.onload = () => ok(true); im.onerror = () => ok(false); im.src = `manual/${base}.${ext}`; });
-    tryLoad('png').then(a => a || tryLoad('jpg')).then(ok => { td.innerHTML = ok ? '<span class="ok">○</span>' : '―'; });
-  });
+const devHtml = devs => devs.map(d => `<div><span class="badge b-${h(d.kind)}">${h(d.kind)}</span>${h(d.tag)}　<span class="muted">${h(d.sheet)}　${h(d.info && (d.kind === 'タッチパネル' ? (d.info.panels || []).map(p => p.model).join('／') : d.info.model) || '')}</span></div>`).join('') || '<span class="muted">なし</span>';
+const builtinOk = (k, base) => base !== '調節弁' && (k !== 'brightness' || base === 'タッチパネル') && (k !== 'bias' || base === '計器');
+// 入力欄は作り直さず、当てはまる機器と条件の文だけ書き直す
+function renderSeriesLive() {
+  const M = S.mx;
+  if (!M.sel || M.sel.t !== 'series') return;
+  const s = (S.draft.series || [])[M.sel.i];
+  if (!s) return;
+  const devs = seriesDevs(s.key);
+  const a = $('#ser-devs'); if (a) a.innerHTML = devHtml(devs);
+  const n = $('#ser-devn'); if (n) n.textContent = devs.length;
+  const c = $('#ser-cond'); if (c) c.textContent = `今の条件：${prefixText(s)}（全角半角・大文字小文字は区別しない。上のシリーズに当てはまった機種は、ここには来ません）`;
+}
+async function loadMx() {
+  const M = S.mx;
+  if (!M.sel || M.sel.t === 'proc') return;
+  const keyBase = M.sel.t === 'common' ? 'common' : ((S.draft.series || [])[M.sel.i] || {}).key;
+  if (!keyBase) return;
+  const keys = allProcs().map(p => keyBase + '-' + p.key);
+  const sel = JSON.stringify(M.sel);
+  M.imgs = null; M.err = '';
+  try {
+    const j = await api('photos', { kind: 'manual', targets: keys });
+    if (JSON.stringify(S.mx.sel) !== sel) return;
+    M.imgs = {}; keys.forEach(k => { M.imgs[k] = []; });
+    j.photos.forEach(p => { (M.imgs[p.key] = M.imgs[p.key] || []).push(p); });
+  } catch (e) { M.err = e.message; }
+  if (S.tab === 'series') { $('#mid').innerHTML = seriesMidHtml(); showStaticAll(); }
+}
+// GitHub（web/manual）に置いた画像を、ある分だけ出す
+async function showStaticAll() {
+  for (const el of document.querySelectorAll('[data-static]')) {
+    const base = el.dataset.static, out = [];
+    const load = src => new Promise(ok => { const im = new Image(); im.onload = () => ok(src); im.onerror = () => ok(null); im.src = src; });
+    for (let n = 1; n <= 20; n++) {
+      const name = n === 1 ? base : `${base}-${n}`;
+      const src = (await load(`manual/${name}.png`)) || (await load(`manual/${name}.jpg`));
+      if (!src) break;
+      out.push(src);
+    }
+    if (el.isConnected && out.length) el.outerHTML = `<div class="muted">GitHub の画像（web/manual。追加した画像が無いときに出ます）</div><div class="thumbs">${out.map(s => `<div class="th"><img src="${h(s)}" alt=""><div class="m">${h(s.replace('manual/', ''))}</div></div>`).join('')}</div>`;
+  }
+}
+async function addManualFiles(key, files) {
+  if (!key || !files.length) return;
+  if (!S.pass && !(await askPass())) return;
+  for (let i = 0; i < files.length; i++) {
+    try {
+      $('#st').textContent = `画像を送っています（${i + 1}/${files.length}）…`;
+      const b64 = await shrinkImage(files[i], 2000, 0.9);
+      const thumb = await shrinkImage(files[i], 240, 0.7);
+      await api('addPhoto', { kind: 'manual', target: key, b64, thumb, mime: 'image/jpeg', pass: S.pass });
+    } catch (e) {
+      if (e.code === 'badpass') S.pass = '';
+      alert(`「${files[i].name}」を追加できませんでした：${e.message}`);
+      break;
+    }
+  }
+  await refreshPhotoIndex();
+  renderHeader();
+  await loadMx();
 }
 
 // ---- 追加した要素（文字・数値・選択・チェック）----
@@ -557,23 +687,7 @@ S.ph = { mode: 'dev', dev: '', man: '', list: null, err: '' };
 const PROC_LABEL = { clock: '時刻合わせ', brightness: '輝度調整', bias: 'PVフィルタ・バイアス' };
 function photosLeftHtml() {
   const P = S.ph;
-  const mode = `<div class="tabs"><button class="${P.mode === 'dev' ? 'on' : ''}" data-act="phmode" data-m="dev">機器の写真</button>
-    <button class="${P.mode === 'manual' ? 'on' : ''}" data-act="phmode" data-m="manual">手順画像</button></div>`;
-  if (P.mode === 'manual') {
-    const series = S.draft.series || [];
-    return mode + `<p class="muted">シリーズ（「手順画像のシリーズ」タブ）と手順ごとに画像を追加できます。追加した画像は、GitHub の web/manual の画像より優先して出ます。追加・削除にはパスワードが必要です。</p>
-      <div class="tlist">${series.map(s => {
-        const k = 'man:' + s.key;
-        const open = S.grp[k] != null ? S.grp[k] : String(P.man).startsWith(s.key + '-');
-        const procs = Object.keys(PROC_LABEL);
-        const total = procs.reduce((n, p) => n + ((S.manualImgs || {})[s.key + '-' + p] || []).length, 0);
-        return `<div class="grp" data-act="grp" data-g="${h(k)}"><span class="arr">${open ? '▾' : '›'}</span>${h(s.name)}<span class="muted">${h(s.key)}</span><span class="gc">追加 ${total} 枚</span></div>
-          ${open ? `<div class="grp-body">${procs.map(p => {
-            const key = s.key + '-' + p, n = ((S.manualImgs || {})[key] || []).length;
-            return `<div class="t dev ${P.man === key ? 'on' : ''}" data-act="phman" data-k="${h(key)}"><span class="cnt">${n ? '追加 ' + n + ' 枚' : ''}</span><div class="nm">${h(PROC_LABEL[p])}</div><div class="cond">${h(key)}</div></div>`;
-          }).join('')}</div>` : ''}`;
-      }).join('') || '<p class="muted">シリーズがありません</p>'}</div>`;
-  }
+  const mode = '';   // 手順画像は「手順と画像」タブへまとめた
   const devs = S.devices.slice().sort((a, b) => `${a.plant}|${a.file}|${a.sheet}`.localeCompare(`${b.plant}|${b.file}|${b.sheet}`, 'ja', { numeric: true }));
   const cnt = id => (S.photoCount || {})[id] || 0;
   return mode + `<p class="muted">機器ごとの写真です（iPhone で撮った写真もここに出ます）。全員で共有し、データ初期化・点検完了でも消えません。</p>
@@ -585,16 +699,8 @@ function photosMidHtml() {
   const P = S.ph;
   const thumbs = () => P.err ? `<div class="errbox">${h(P.err)}</div>` : P.list == null ? '<p class="muted">読み込み中…</p>'
     : P.list.length ? `<div class="thumbs">${P.list.map(p => `<div class="th"><img src="${p.thumb ? 'data:image/jpeg;base64,' + p.thumb : ''}" data-act="phview" data-pid="${h(p.pid)}" alt="">
-        <div class="m"><span>${h(String(p.at).slice(5, 16).replace('-', '/'))}<br>${h(p.by || '')}</span><button class="small del" data-act="phdel" data-pid="${h(p.pid)}">削除</button></div></div>`).join('')}</div>`
+        <div class="m"><span>${h(String(p.at).slice(5, 16).replace('-', '/'))}<br>${h(p.by || '')}</span><button class="small del" data-act="phdel" data-kind="dev" data-pid="${h(p.pid)}">削除</button></div></div>`).join('')}</div>`
     : '<p class="muted">まだありません</p>';
-  if (P.mode === 'manual') {
-    if (!P.man) return '<div class="card"><h2>手順画像</h2><p class="muted">左でシリーズの › を押し、手順を選んでください。</p></div>';
-    return `<div class="card"><h2>手順画像：${h(P.man)}</h2>
-      <p class="muted">ここで追加した画像が、上から順に手順ボタンで出ます（追加した順）。1枚も無いときは GitHub の web/manual/${h(P.man)}.png（-2.png …）が出ます。</p>
-      <div class="row"><label>画像を追加</label><input type="file" accept="image/*" multiple data-phadd="manual"></div>
-      <h3>追加した画像</h3>${thumbs()}
-      <h3>GitHub の画像（web/manual）</h3><div id="ph-static" class="thumbs"><span class="muted">確認中…</span></div></div>`;
-  }
   const d = S.devices.find(x => x.id === P.dev);
   if (!d) return '<div class="card"><h2>機器の写真</h2><p class="muted">左で様式の › を押し、機器を選んでください。</p></div>';
   return `<div class="card"><h2>${h(d.tag)} の写真</h2><p class="muted">${h(d.plant || '')}　${h(d.file)}　${h(d.sheet)}</p>
@@ -611,7 +717,7 @@ async function loadPhotoList() {
     if ((P.mode === 'manual' ? P.man : P.dev) !== key) return;
     P.list = j.photos;
   } catch (e) { P.err = e.message; }
-  if (S.tab === 'photos') { $('#mid').innerHTML = photosMidHtml(); showStatic(); }
+  if (S.tab === 'photos') $('#mid').innerHTML = photosMidHtml();
 }
 // GitHub（web/manual）に置いた画像を、ある分だけ出す
 async function showStatic() {
@@ -664,7 +770,7 @@ async function addPhotoFiles(kind, files) {
 }
 async function refreshPhotoIndex() {
   try { const j = await api('list'); S.photoCount = j.photoCount || {}; S.manualImgs = j.manualImgs || {}; } catch (e) { /* 数は次の読み込みで直る */ }
-  if (S.tab === 'photos') renderLeft();
+  if (S.tab === 'photos' || S.tab === 'series') renderLeft();
 }
 async function viewPhoto(pid) {
   const el = document.createElement('div');
@@ -727,6 +833,13 @@ function impact() {
   }).filter(Boolean);
   pubTypes.filter(p => !S.draft.types.some(t => t.id === p.id)).forEach(p => typeChanges.push(`種類「${p.name}」を削除`));
   if (JSON.stringify((effPublished() || {}).series || []) !== JSON.stringify(S.draft.series || [])) typeChanges.push('手順画像のシリーズ');
+  const pubP = (effPublished() || {}).procs || [];
+  (S.draft.procs || []).forEach(p => {
+    const q = pubP.find(x => x.key === p.key);
+    if (!q) typeChanges.push(`手順「${p.label}」を追加`);
+    else if (JSON.stringify(q) !== JSON.stringify(p)) typeChanges.push(`手順「${p.label}」の設定`);
+  });
+  pubP.filter(q => !(S.draft.procs || []).some(p => p.key === q.key)).forEach(q => typeChanges.push(`手順「${q.label}」を削除`));
   const pubC = (effPublished() || {}).customs || [];
   (S.draft.customs || []).forEach(c => {
     const p = pubC.find(x => x.id === c.id);
@@ -766,8 +879,10 @@ function validate() {
   (S.draft.series || []).forEach((s, i) => {
     if (!/^[a-z0-9_-]+$/.test(s.key || '')) errs.push(`シリーズ ${i + 1} 番目のキーは半角の小文字・数字・ - _ にしてください（画像の名前になります）`);
     if (keys.has(s.key)) errs.push(`シリーズのキーが重複しています（${s.key}）`);
+    if (s.key === 'common') errs.push('シリーズのキー「common」は共通の画像に使うため使えません');
     keys.add(s.key);
   });
+  (S.draft.procs || []).forEach((p, i) => { if (!String(p.label || '').trim()) errs.push(`追加した手順 ${i + 1} 番目に名前がありません`); });
   return errs;
 }
 function showClassify(publishMode) {
@@ -877,24 +992,42 @@ document.addEventListener('click', async e => {
     ls.set('kensa-editor.conn', S.conn);
     boot();
   }
-  else if (act === 'tab') { S.tab = b.dataset.t; renderLeft(); renderMid(); renderPvDevices(); updatePreview(); if (S.tab === 'series') checkImages(); if (S.tab === 'photos') loadPhotoList(); }
+  else if (act === 'tab') { S.tab = b.dataset.t; renderLeft(); renderMid(); renderPvDevices(); updatePreview(); if (S.tab === 'series') loadMx(); if (S.tab === 'photos') loadPhotoList(); }
   else if (act === 'grp') { const k = b.dataset.g; const cur = b.querySelector('.arr').textContent === '▾'; S.grp[k] = !cur; ls.set('kensa-editor.grp', S.grp); renderLeft(); }
-  else if (act === 'phmode') { S.ph.mode = b.dataset.m; S.ph.list = null; S.ph.err = ''; renderLeft(); renderMid(); loadPhotoList(); }
   else if (act === 'phdev') {
     S.ph.dev = b.dataset.id; renderLeft(); renderMid(); loadPhotoList();
     // 右のプレビューもその機器にする（選べるときだけ）
     const sel = $('#pvdev');
     if ([...sel.options].some(o => o.value === S.ph.dev)) { sel.value = S.ph.dev; updatePreview(); }
   }
-  else if (act === 'phman') { S.ph.man = b.dataset.k; renderLeft(); renderMid(); loadPhotoList(); }
+  // ---- 手順と画像 ----
+  else if (act === 'mxproc') { S.mx.sel = { t: 'proc', key: b.dataset.k }; renderLeft(); renderMid(); }
+  else if (act === 'mxser') { S.mx.sel = { t: 'series', i: +b.dataset.i }; S.grp['mx:s' + b.dataset.i + ':' + ((S.draft.series || [])[+b.dataset.i] || {}).key] = true; renderLeft(); renderMid(); loadMx(); }
+  else if (act === 'mxcommon') { S.mx.sel = { t: 'common' }; S.grp['mx:common'] = true; renderLeft(); renderMid(); loadMx(); }
+  else if (act === 'addProc') {
+    const P = (S.draft.procs = S.draft.procs || []);
+    const key = 'p' + Date.now().toString(36);
+    P.push({ key, label: '点検手順', cat: 'inspect', bases: [] });
+    S.mx.sel = { t: 'proc', key }; renderLeft(); renderMid(); changed();
+  }
+  else if (act === 'delProc') {
+    const k = S.mx.sel && S.mx.sel.key;
+    const p = (S.draft.procs || []).find(x => x.key === k);
+    if (!p) return;
+    const n = Object.keys(S.manualImgs || {}).filter(x => x.endsWith('-' + k)).reduce((s, x) => s + imgCount(x), 0);
+    if (!confirm(`手順「${p.label}」を削除します（機器種類の手順ボタンからも外れます）。${n ? `\n追加した画像 ${n} 枚はサーバーに残りますが、出なくなります。` : ''}よろしいですか？`)) return;
+    S.draft.procs = S.draft.procs.filter(x => x.key !== k);
+    S.draft.types.forEach(t => { if (t.manual) t.manual = t.manual.filter(x => x !== k); });
+    S.mx.sel = null; renderLeft(); renderMid(); changed();
+  }
   else if (act === 'phview') viewPhoto(b.dataset.pid);
   else if (act === 'phdel') {
-    const manual = S.ph.mode === 'manual';
+    const manual = b.dataset.kind === 'manual';
     if (!confirm(`この${manual ? '手順画像' : '写真'}を削除します（iPhone からも見えなくなります。Googleドライブのゴミ箱に30日残ります）。よろしいですか？`)) return;
     if (manual && !S.pass && !(await askPass())) return;
     try { await api('deletePhoto', { pid: b.dataset.pid, pass: S.pass }); }
     catch (err) { if (err.code === 'badpass') S.pass = ''; alert(err.message); return; }
-    await refreshPhotoIndex(); await loadPhotoList();
+    await refreshPhotoIndex(); if (manual) await loadMx(); else await loadPhotoList();
   }
   else if (act === 'csel') { S.csel = +b.dataset.i; renderLeft(); renderMid(); renderPvDevices(); updatePreview(); }
   else if (act === 'addCustom') {
@@ -951,9 +1084,28 @@ document.addEventListener('click', async e => {
   }
   else if (act === 'addCond') { (T[S.sel].when = T[S.sel].when || []).push({ field: 'name', op: 'contains', values: [] }); renderMid(); changed(); }
   else if (act === 'delCond') { T[S.sel].when.splice(+b.dataset.ci, 1); renderMid(); changed(true); }
-  else if (act === 'addSeries') { (S.draft.series = S.draft.series || []).push({ key: 'new' + (S.draft.series.length + 1), name: '新しいシリーズ', prefixes: [] }); renderLeft(); renderMid(); checkImages(); changed(); }
-  else if (act === 'delSeries') { S.draft.series.splice(+b.dataset.i, 1); renderLeft(); renderMid(); checkImages(); changed(); }
-  else if (act === 'upSeries') { const i = +b.dataset.i; if (i > 0) { const s = S.draft.series; [s[i - 1], s[i]] = [s[i], s[i - 1]]; renderLeft(); renderMid(); checkImages(); changed(); } }
+  else if (act === 'addSeries') {
+    const s = (S.draft.series = S.draft.series || []);
+    let n = s.length + 1; while (s.some(x => x.key === 'new' + n)) n++;
+    s.push({ key: 'new' + n, name: '新しいシリーズ', prefixes: [] });
+    S.mx.sel = { t: 'series', i: s.length - 1 }; S.grp['mx:s' + (s.length - 1) + ':new' + n] = true;
+    renderLeft(); renderMid(); loadMx(); changed();
+  }
+  else if (act === 'delSeries' || act === 'upSeries' || act === 'downSeries') {
+    const s = S.draft.series || [];
+    if (!S.mx.sel || S.mx.sel.t !== 'series' || !s[S.mx.sel.i]) { alert('左で、シリーズの › を押して「条件と画像」を選んでから押してください。'); return; }
+    const i = S.mx.sel.i;
+    if (act === 'delSeries') {
+      const n = allProcs().reduce((m, p) => m + imgCount(s[i].key + '-' + p.key), 0);
+      if (!confirm(`シリーズ「${s[i].name}」を削除します。${n ? `\n追加した画像 ${n} 枚はサーバーに残りますが、出なくなります。` : ''}よろしいですか？`)) return;
+      s.splice(i, 1); S.mx.sel = null;
+    } else {
+      const j = act === 'upSeries' ? i - 1 : i + 1;
+      if (j < 0 || j >= s.length) return;
+      [s[i], s[j]] = [s[j], s[i]]; S.mx.sel = { t: 'series', i: j };
+    }
+    renderLeft(); renderMid(); if (S.mx.sel) loadMx(); changed();
+  }
   else if (act === 'classify') { if (S.loaded) { await reclassify(); showClassify(false); } }
   else if (act === 'publish') { if (S.loaded) { await reclassify(); showClassify(true); } }
   else if (act === 'reload') { if (S.loaded) await reloadAll(false); }
@@ -991,6 +1143,12 @@ document.addEventListener('input', e => {
     changed(); renderLeftSoon();
     return;
   }
+  // 追加した手順の名前
+  if (t.dataset.pf === 'label' && S.draft && S.mx.sel && S.mx.sel.t === 'proc') {
+    const p = (S.draft.procs || []).find(x => x.key === S.mx.sel.key);
+    if (p) { p.label = t.value; changed(); renderLeftSoon(); }
+    return;
+  }
   // シリーズの欄は種類が無くても編集できるように先に扱う
   if (t.dataset.sf != null && S.draft) {
     const s = S.draft.series[+t.dataset.sf];
@@ -1012,6 +1170,34 @@ document.addEventListener('change', e => {
   const T = S.draft && S.draft.types[S.sel];
   if (t.id === 'pvdev' || t.id === 'pvmode' || t.id === 'pvdetails') { updatePreview(); return; }
   if (t.dataset.phadd) { const files = [...(t.files || [])]; t.value = ''; addPhotoFiles(t.dataset.phadd, files); return; }
+  if (t.dataset.mxadd) { const files = [...(t.files || [])]; t.value = ''; addManualFiles(t.dataset.mxadd, files); return; }
+  // 追加した手順の分類・様式、手順を出す機器種類
+  if ((t.dataset.pf || t.dataset.pbase) && S.draft && S.mx.sel && S.mx.sel.t === 'proc') {
+    const p = (S.draft.procs || []).find(x => x.key === S.mx.sel.key);
+    if (!p) return;
+    if (t.dataset.pf === 'cat') p.cat = t.value;
+    else if (t.dataset.pf === 'label') { renderLeft(); return; }
+    else if (t.dataset.pbase) {
+      const set = new Set(p.bases || []);
+      if (t.checked) set.add(t.dataset.pbase); else set.delete(t.dataset.pbase);
+      p.bases = KIND_ORDER.filter(k => set.has(k));
+      // 様式から外れた機器種類の手順ボタンからは外す
+      S.draft.types.forEach(ty => { if (!procOkForBase(p, ty.base) && ty.manual) ty.manual = ty.manual.filter(x => x !== p.key); });
+    }
+    renderLeft(); renderMid(); changed();
+    return;
+  }
+  if (t.dataset.ptype && S.draft && S.mx.sel && S.mx.sel.t === 'proc') {
+    const ty = S.draft.types.find(x => x.id === t.dataset.ptype);
+    if (!ty) return;
+    const set = new Set(ty.manual || []);
+    if (t.checked) set.add(S.mx.sel.key); else set.delete(S.mx.sel.key);
+    ty.manual = allProcs().map(p => p.key).filter(k => set.has(k));
+    renderLeft(); changed();
+    return;
+  }
+  // シリーズのキーを変えた：そのキーの画像を読み直す
+  if (t.dataset.sf != null && t.dataset.k === 'key' && S.tab === 'series') { renderLeft(); loadMx(); return; }
   // 追加した要素
   if ((t.dataset.cu || t.dataset.ctype) && S.draft) {
     const c = (S.draft.customs || [])[S.csel];
@@ -1052,7 +1238,7 @@ document.addEventListener('change', e => {
     const set = new Set(T.manual || []);
     if (t.checked) set.add(t.dataset.proc); else set.delete(t.dataset.proc);
     // 並びは 輝度調整 → 時刻合わせ → PVフィルタ・バイアス
-    T.manual = Object.keys(S.defs.procs).filter(k => set.has(k));
+    T.manual = allProcs().map(p => p.key).filter(k => set.has(k));
     changed();
   }
 });

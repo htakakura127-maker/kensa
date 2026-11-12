@@ -351,6 +351,10 @@ function validConfig(c) {
     (e.place == null || Object.keys(CUSTOM_PLACES).includes(e.place)) && okStr(e.unit) && okBool(e.req) && okBool(e.def) &&
     okSub(e.read, ['cell']) && okSub(e.write, ['cell', 'empty', 'on', 'off']) && okSub(e.note, ['template']);
   if (c.customs != null && !(Array.isArray(c.customs) && c.customs.every(okCustom) && new Set(c.customs.map(e => e.id)).size === c.customs.length)) return null;
+  // 追加した手順（procs）：{ key, label, cat（fix 修正／check 確認／inspect 点検）, bases（様式） }
+  const okProc = p => isObj(p) && typeof p.key === 'string' && /^[a-z0-9_]+$/.test(p.key) && !Object.keys(MANUAL_PROCS).includes(p.key) && !RESERVED.includes(p.key) &&
+    typeof p.label === 'string' && (p.cat == null || Object.keys(PROC_CATS).includes(p.cat)) && (p.bases == null || (isStrArr(p.bases) && p.bases.every(b => Object.values(KIND).includes(b))));
+  if (c.procs != null && !(Array.isArray(c.procs) && c.procs.every(okProc) && new Set(c.procs.map(p => p.key)).size === c.procs.length)) return null;
   return c;
 }
 
@@ -1040,12 +1044,26 @@ function clockSection(d, data, editable) {
 //   タッチパネルは機種のシリーズごとに手順が違うため、シートの各台の型番からシリーズを判定し、シリーズごとに画像を出す
 //   画像の名前：<シリーズ>-<手順>.png（2枚目以降は -2.png、-3.png …）。例：gp4000-clock.png
 const MANUAL_PROCS = { brightness: '輝度調整', clock: '時刻合わせ', bias: 'PVフィルタ・バイアス' };
+// 手順の分類（ボタンの名前になる）。もとからある手順：輝度調整・時刻合わせ＝修正手順、PVフィルタ・バイアス＝確認手順
+//   編集画面で手順を追加できる（設定の procs）。追加した手順の画像は「シリーズ-手順」か、どの機種でも出す「common-手順」
+const PROC_CATS = { fix: '修正手順', check: '確認手順', inspect: '点検手順' };
+const BUILTIN_CAT = { brightness: 'fix', clock: 'fix', bias: 'check' };
+const customProc = k => (appConfig.procs || []).find(p => p.key === k);
+const procLabel = k => MANUAL_PROCS[k] || (customProc(k) || {}).label || k;
+const procCat = k => BUILTIN_CAT[k] || (customProc(k) || {}).cat || 'inspect';
+// ボタンの名前：手順の分類をまとめる（例：修正手順、修正・確認手順、点検手順）
+const procsButtonLabel = procs => {
+  const cats = Object.keys(PROC_CATS).filter(c => procs.some(p => procCat(p) === c));
+  return cats.length ? cats.map(c => PROC_CATS[c].replace('手順', '')).join('・') + '手順' : '';
+};
 // 時刻合わせの見出しの「（記録計）」は、名称に記録計とある機器だけに付ける（記録計以外の種類に時刻合わせを出す設定もできるため）
 const recSuffix = d => /記録計/.test((d.info && d.info.name) || d.tag || '') ? '（記録計）' : '';
 // その機器で見られる手順（設定の機器種類の manual。輝度調整はタッチパネル、PVフィルタ・バイアスは計器だけ。調節弁には無い）
+//   追加した手順（設定の procs）は、その手順の様式（bases。空ならどの様式でも）の機器だけ
 function manualProcs(d) {
-  return (typeOf(d).manual || []).filter(p => MANUAL_PROCS[p] && d.kind !== KIND.VALVE &&
-    (p !== 'brightness' || d.kind === KIND.TOUCH) && (p !== 'bias' || d.kind === KIND.KEIKI));
+  return (typeOf(d).manual || []).filter(p => MANUAL_PROCS[p]
+    ? d.kind !== KIND.VALVE && (p !== 'brightness' || d.kind === KIND.TOUCH) && (p !== 'bias' || d.kind === KIND.KEIKI)
+    : !!customProc(p) && (!(customProc(p).bases || []).length || customProc(p).bases.includes(d.kind)));
 }
 // 手順画像のシリーズ（設定の series。型番の先頭で判定）
 const seriesOf = model => {
@@ -1079,8 +1097,20 @@ async function showManual(d) {
   const procs = manualProcs(d);
   if (!procs.length) return;
   let proc = procs[0];
+  const builtin = procs.every(p => MANUAL_PROCS[p]);
+  if (!builtin) {
+    // 追加した手順があるとき：2つ以上なら選んでもらう（分類が混ざるときは分類も書く）
+    if (procs.length > 1) {
+      const mixedCat = new Set(procs.map(procCat)).size > 1;
+      proc = await choose(`${procsButtonLabel(procs)}を選んでください。`, [
+        ...procs.map(p => ({ key: p, label: procLabel(p) + (mixedCat ? `（${PROC_CATS[procCat(p)]}）` : '') })),
+        { key: 'cancel', label: 'キャンセル' },
+      ]);
+      if (!procs.includes(proc)) return;
+    }
+  }
   //   （PVフィルタ・バイアスは、1つだけでも選んでから出す＝調節計の確認手順の決まり）
-  if (!(procs.length === 1 && proc !== 'bias')) {
+  else if (!(procs.length === 1 && proc !== 'bias')) {
     const mixed = d.kind !== KIND.TOUCH && procs.includes('clock') && procs.length > 1;
     const title = d.kind === KIND.TOUCH ? '修正手順を選んでください。' : mixed ? '手順を選んでください。' : procs.includes('clock') ? '修正手順を選んでください。' : '確認手順を選んでください。';
     proc = await choose(title, [
@@ -1103,13 +1133,17 @@ async function showManual(d) {
     const s = seriesOf(model);
     if (!s) { other.push(`${u.name}（${model || '型番なし'}）`); return; }
     let g = groups.find(x => x.key === s.key);
-    if (!g) groups.push(g = { key: s.key, title: s.name, bases: [`${s.key}-${proc}`], panels: [] });
+    // シリーズの画像が無ければ、どの機種でも出す画像（common-手順）
+    if (!g) groups.push(g = { key: s.key, title: s.name, bases: [`${s.key}-${proc}`, `common-${proc}`], panels: [] });
     g.panels.push(`${u.name}（${model}）`);
   });
-  if (other.length) groups.push({ title: '手順の無い機種', panels: other });
+  // シリーズに当てはまらない機種：どの機種でも出す画像（common-手順）があれば出す
+  if (other.length) groups.push({ title: groups.length || MANUAL_PROCS[proc] ? '手順の無い機種' : '', bases: [`common-${proc}`], panels: other, none: true });
+  const head = !MANUAL_PROCS[proc] ? `${PROC_CATS[procCat(proc)]}：${h(procLabel(proc))}`
+    : proc === 'bias' ? '確認手順：PVフィルタ・バイアス（' + (/指示計/.test(d.info.name || '') && !/調節計/.test(d.info.name || '') ? '指示計' : '調節計') + '）' : '修正手順：' + h(MANUAL_PROCS[proc]) + (d.kind === KIND.TOUCH ? '' : recSuffix(d));
   const el = document.createElement('div');
   el.className = 'modal manual';
-  el.innerHTML = `<div class="box"><div class="msg" style="font-weight:700">${proc === 'bias' ? '確認手順：PVフィルタ・バイアス（' + (/指示計/.test(d.info.name || '') && !/調節計/.test(d.info.name || '') ? '指示計' : '調節計') + '）' : '修正手順：' + h(MANUAL_PROCS[proc]) + (d.kind === KIND.TOUCH ? '' : recSuffix(d))}</div>
+  el.innerHTML = `<div class="box"><div class="msg" style="font-weight:700">${head}</div>
     ${groups.map((g, i) => `<div class="man-group">${g.title ? `<div class="man-title">${h(g.title)}</div>` : ''}
       ${g.panels.length ? `<div class="muted">${g.panels.map(h).join('<br>')}</div>` : ''}
       <div data-man-imgs="${i}">${g.bases ? '<p class="muted">読み込み中…</p>' : ''}</div></div>`).join('')}
@@ -1122,7 +1156,8 @@ async function showManual(d) {
     for (const base of groups[i].bases) { imgs = await loadManualImages(base); if (imgs.length) break; }
     if (!el.isConnected) return;
     const box = el.querySelector(`[data-man-imgs="${i}"]`);
-    box.innerHTML = imgs.length ? '' : `<p class="muted">この手順の画像はまだ登録されていません（web/manual/${h(groups[i].bases[0])}.png）。</p>`;
+    box.innerHTML = imgs.length ? '' : groups[i].none ? (groups[i].title ? '' : '<p class="muted">この手順の画像はまだ登録されていません（編集画面の「手順と画像」で追加できます）。</p>')
+      : `<p class="muted">この手順の画像はまだ登録されていません（編集画面の「手順と画像」で追加できます）。</p>`;
     imgs.forEach(img => box.appendChild(img));
   }
 }
@@ -1880,7 +1915,8 @@ function detailsBlock(i) {
   //   ボタン名は機器種類の手順で決まる（時刻合わせ・輝度調整＝修正手順、PVフィルタ・バイアス＝確認手順、両方＝修正・確認手順）
   const procs = d ? manualProcs(d) : [];
   const fix = procs.some(p => p !== 'bias');
-  const label = !procs.length ? '' : d.kind === KIND.TOUCH ? '修正手順' : fix && procs.includes('bias') ? '修正・確認手順' : fix ? '修正手順' : '確認手順';
+  const label = !procs.length ? '' : !procs.every(p => MANUAL_PROCS[p]) ? procsButtonLabel(procs)
+    : d.kind === KIND.TOUCH ? '修正手順' : fix && procs.includes('bias') ? '修正・確認手順' : fix ? '修正手順' : '確認手順';
   const manual = label ? `<button type="button" class="btn small" data-act="manual">${label}</button>` : '';
   if (!list.length) return manual;
   return `${manual}<button type="button" class="btn small" data-act="details">${view.details ? '詳細を閉じる ▲' : '詳細を表示 ▼'}</button>
@@ -2678,7 +2714,7 @@ if (PREVIEW) {
   function sendReady() {
     if (window.parent !== window) {
       window.parent.postMessage({ type: 'previewReady', defaults: DEFAULT_CONFIG, showDef: SHOW_DEF, condFields: COND_FIELDS, condOps: COND_OPS, procs: MANUAL_PROCS, kinds: Object.values(KIND),
-        customKinds: CUSTOM_KINDS, customPlaces: CUSTOM_PLACES }, MSG_TARGET);
+        customKinds: CUSTOM_KINDS, customPlaces: CUSTOM_PLACES, procCats: PROC_CATS, builtinCat: BUILTIN_CAT }, MSG_TARGET);
     }
   }
   sendReady();
