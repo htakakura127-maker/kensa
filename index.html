@@ -206,6 +206,10 @@ textarea.memo { display: block; width: 100%; min-height: 110px; }
 .cfield .chk { margin-top: 0; }
 .pclock { display: grid; grid-template-columns: minmax(0, 1fr) 120px; gap: 8px; align-items: center; margin-top: 6px; font-size: 14px; }
 .ptext { font-size: 12px; color: var(--sub); margin-top: 4px; }
+.clocksrc { margin-top: 8px; font-size: 14px; }
+.clocksrc .names { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 4px; }
+.clocksrc .names button { padding: 10px 4px; font-size: 15px; }
+.clocksrc .names button.wait { opacity: .6; }
 .actions { position: fixed; left: 0; right: 0; bottom: 0; z-index: 4; padding: 8px 16px calc(env(safe-area-inset-bottom) + 8px); background: rgba(243,245,248,.96); border-top: 1px solid var(--line); }
 .actions .inner { max-width: 760px; margin: 0 auto; display: flex; gap: 8px; }
 .actions .btn { margin: 0; }
@@ -277,7 +281,7 @@ const SHOW_DEF = /*SHOW_DEF_BEGIN*/[
   { "key": "jst", "label": "日本標準時間ボタン（各台の画面切り替えの下）", "bases": ["タッチパネル"], "def": true, "el": "jst" },
   { "key": "adjust", "label": "「調整した」（調整後の値の入力）", "bases": ["計器", "調節弁"], "def": true, "el": "points" },
   { "key": "deviation", "label": "誤差の目安", "bases": ["計器", "調節弁"], "def": true, "el": "deviation" },
-  { "key": "result", "label": "判定（合格・不合格／良好・動作不良）", "bases": ["計器", "調節弁"], "def": true, "el": "result" },
+  { "key": "result", "label": "判定（計器：合格・不合格／調節弁：良好・動作不良と合格・不合格）", "bases": ["計器", "調節弁"], "def": true, "el": "result" },
   { "key": "tests", "label": "耐圧・漏洩・気密試験", "bases": ["調節弁"], "def": true, "el": "tests" },
   { "key": "parts", "label": "使用部品", "bases": ["計器", "調節弁"], "def": true, "el": "parts" },
   { "key": "replaced", "label": "交換済みボタン（フィルター・パッキン類）", "bases": ["計器", "調節弁"], "def": true, "parent": "parts", "el": "replaced" },
@@ -576,6 +580,8 @@ async function refresh(quiet) {
       Object.keys(old).forEach(id => {
         const o = old[id], n = notes[id] || {};
         if (o && (o.sealPending || (o.sealAt && String(o.sealAt) > String(j.now || '')))) notes[id] = Object.assign({}, n, { seal: o.seal, sealAt: o.sealAt, sealBy: o.sealBy, sealPending: o.sealPending });
+        // タッチパネル時刻の元も同じ考え方（送信中・一覧より後に記録したものだけ残す）
+        if (o && ((o.clockSrcPending && Object.keys(o.clockSrcPending).length) || (o.clockSrcAt && String(o.clockSrcAt) > String(j.now || '')))) notes[id] = Object.assign({}, notes[id] || {}, { clockSrc: o.clockSrc, clockSrcAt: o.clockSrcAt, clockSrcBy: o.clockSrcBy, clockSrcPending: o.clockSrcPending });
       });
       store.set('notes', notes);
     }
@@ -671,7 +677,7 @@ function normalize(d, data) {
   const prev = d.info.prev || {};
   const base = { date: today(), temp: '', note: (prev.note || []).join('\n'), worker: cfg.name, inspectors: [], replaced: {}, fields: {} };
   if (d.kind === KIND.KEIKI) Object.assign(base, { result: '合格' });
-  if (d.kind === KIND.VALVE) Object.assign(base, { judge: '良好' });
+  if (d.kind === KIND.VALVE) Object.assign(base, { judge: '良好', result: '合格' });
   const out = Object.assign(base, data || {});
   // 旧版のデータ（押した順に右詰めで全員）は、一番右を作業員、残りを右から順に検査員として読み替える
   if (data && !('worker' in data) && Array.isArray(data.inspectors) && data.inspectors.filter(Boolean).length) {
@@ -1294,6 +1300,51 @@ function itemButton(d) {
     <span class="right"><span class="badge st-${s.cls}">${h(s.text)}</span>${sealSwitch(d)}</span></button>`;
 }
 
+// タッチパネルの時計が「PLC から受け取った時刻」か「タッチパネル本体の時計」か（台ごと。全員で共有。初期化しても消えない）
+//   今後、時刻の設定方法を手順に書き分けるための記録。報告書（Excel）には書かない。もう一度押すと取り消し
+const CLOCK_SRCS = [['PLC', 'PLC時刻'], ['タッチパネル', 'タッチパネル時刻']];
+function clockSrcRow(d, b) {
+  const n = notes[d.id] || {};
+  const cur = (n.clockSrc || [])[b] || '';
+  const pend = n.clockSrcPending && n.clockSrcPending[b];
+  const who = cur && n.clockSrcBy && !pend ? `<small class="muted">（${h(n.clockSrcBy)}${n.clockSrcAt ? ' ' + h(String(n.clockSrcAt).slice(5, 10).replace('-', '/')) : ''}）</small>` : '';
+  return `<div class="clocksrc"><span>表示している時刻 <small class="muted">どちらか1つ（記録のみ・報告書には書きません）</small>${who}</span>
+    <div class="names pick">${CLOCK_SRCS.map(([v, label]) => `<button type="button" class="${cur === v ? 'on' : ''}${pend ? ' wait' : ''}" data-act="clocksrc" data-id="${h(d.id)}" data-b="${b}" data-src="${h(v)}" ${PREVIEW ? 'disabled' : ''}>${h(label)}</button>`).join('')}</div></div>`;
+}
+
+// すぐ切り替えて見せ、裏でサーバーへ送る（だめなら元に戻す）。選んでいるほうをもう一度押すと取り消し
+async function setClockSrc(id, b, v) {
+  const d = getDev(id);
+  if (!d || PREVIEW) return;
+  const before = Object.assign({}, notes[id]);
+  if (before.clockSrcPending && before.clockSrcPending[b]) return;
+  const list = (before.clockSrc || []).slice();
+  while (list.length <= b) list.push('');
+  const src = list[b] === v ? '' : v;
+  list[b] = src;
+  notes[id] = Object.assign({}, before, { clockSrc: list, clockSrcPending: Object.assign({}, before.clockSrcPending, { [b]: true }) });
+  if (view.screen === 'detail' && view.id === id) renderDetail();
+  try {
+    const j = await netTask(() => api('setClockSrc', { id, tag: d.tag, plant: d.plant, panel: b, src }));
+    const pendLeft = Object.assign({}, (notes[id] || {}).clockSrcPending); delete pendLeft[b];
+    // 返ってきた内容に、ほかの台でまだ送信中の選択があれば、その台だけ手元の選択を残す
+    const got = (j.note.clockSrc || []).slice();
+    Object.keys(pendLeft).forEach(k => { while (got.length <= k) got.push(''); got[k] = ((notes[id] || {}).clockSrc || [])[k] || ''; });
+    // 書き換えるのは時刻の元だけ（応答が遅れて届いても、その間に変わったメモ・シールなどを古い内容で戻さない）
+    const nowN = Object.assign({}, notes[id]);
+    delete nowN.clockSrcPending;
+    notes[id] = Object.assign(nowN, { clockSrc: got, clockSrcAt: j.note.clockSrcAt, clockSrcBy: j.note.clockSrcBy }, Object.keys(pendLeft).length ? { clockSrcPending: pendLeft } : {});
+    store.set('notes', notes);
+  } catch (e) {
+    const cur = notes[id] || {};
+    const pendLeft = Object.assign({}, cur.clockSrcPending); delete pendLeft[b];
+    const back = (cur.clockSrc || []).slice(); back[b] = (before.clockSrc || [])[b] || '';
+    notes[id] = Object.assign({}, cur, { clockSrc: back, clockSrcPending: pendLeft });
+    alert(e.code === 'offline' ? '時刻の元の記録には電波が必要です。' : e.message);
+  }
+  if (view.screen === 'detail' && view.id === id) renderDetail(); else if (view.screen !== 'detail') render();
+}
+
 // 点検シールを貼ったかの確認用スイッチ（全員で共有。データ初期化で外れる）。押しても機器は開かない
 function sealSwitch(d) {
   const on = !!(notes[d.id] || {}).seal;
@@ -1310,7 +1361,10 @@ async function toggleSeal(id) {
   render();
   try {
     const j = await netTask(() => api('setSeal', { id, tag: d.tag, plant: d.plant, seal }));
-    notes[id] = j.note;
+    // 書き換えるのはシールだけ（応答が遅れて届いても、その間に変わったタッチパネル時刻の元などを古い内容で戻さない）
+    const now = Object.assign({}, notes[id]);
+    delete now.sealPending;
+    notes[id] = Object.assign(now, { seal: j.note.seal, sealAt: j.note.sealAt, sealBy: j.note.sealBy });
     store.set('notes', notes);
   } catch (e) {
     notes[id] = Object.assign({}, before, { sealPending: false });
@@ -1696,7 +1750,7 @@ function form(d, data, editable) {
             ${pd.clockDir && pd.clockDir !== CLOCK_OK ? `<div class="pclock"><span>ずれ（分）</span>
               <input class="num" inputmode="decimal" data-k="panels.${b}.clockMin" value="${h(pd.clockMin)}" placeholder="分" ${dis}></div>` : ''}
             <div class="ptext">(今回)<span data-ptext="${b}">${h(pd.items[2])}</span></div>
-            <div class="ptext">(前回)${h((p.prev || [])[2] || '')}</div>`;
+            <div class="ptext">(前回)${h((p.prev || [])[2] || '')}</div>${clockSrcRow(d, b)}`;
         }
         // 画面切り替えの下に、日本標準時（NICT）を表示するボタン
         const jst = j === 3 && opt(d, 'jst') ? '<button type="button" class="btn small" data-act="jst">日本標準時間</button>' : '';
@@ -1725,7 +1779,8 @@ function form(d, data, editable) {
         <label>判定<select data-k="result" ${dis}>${opts(['合格', '不合格'], data.result)}</select></label></div>`;
     } else {
       if (opt(d, 'result')) html += `<div class="grid2" style="margin-top:12px">
-        <label>判定<select data-k="judge" ${dis}>${opts(['良好', '動作不良'], data.judge)}</select></label></div>`;
+        <label>判定<select data-k="judge" ${dis}>${opts(['良好', '動作不良'], data.judge)}</select></label>
+        <label>合否<select data-k="result" ${dis}>${opts(['合格', '不合格'], data.result)}</select></label></div>`;
       if (opt(d, 'tests')) html += testsSection(d, data, editable);
     }
     if (opt(d, 'parts')) html += partsSection(d, data, editable);
@@ -2112,6 +2167,7 @@ document.addEventListener('click', async e => {
   else if (act === 'refresh') withBusy('更新しています…', () => refresh());
   else if (act === 'open') openDevice(b.dataset.id);
   else if (act === 'seal') toggleSeal(b.dataset.id);
+  else if (act === 'clocksrc') setClockSrc(b.dataset.id, Number(b.dataset.b), b.dataset.src);
   else if (act === 'start') startWork(false);
   else if (act === 'reopen') { if (confirm('完了済みの機器を修正のため再開します。よろしいですか？')) startWork(true); }
   else if (act === 'release') releaseWork();
