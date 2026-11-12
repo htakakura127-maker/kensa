@@ -153,6 +153,7 @@ textarea.memo { display: block; width: 100%; min-height: 110px; }
 .item .right { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 5px; max-width: 45%; }
 .item .right .badge { max-width: 100%; }
 .seal { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--sub); padding: 2px 0 2px 6px; }
+.seal .sl { font-size: 10px; letter-spacing: -.02em; white-space: nowrap; }
 .seal .track { position: relative; width: 34px; height: 19px; border-radius: 99px; background: #c4ccd4; transition: background .15s; }
 .seal .knob { position: absolute; top: 2px; left: 2px; width: 15px; height: 15px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.3); transition: left .15s; }
 .seal.on { color: var(--done); font-weight: 700; }
@@ -206,6 +207,14 @@ textarea.memo { display: block; width: 100%; min-height: 110px; }
 .cfield .chk { margin-top: 0; }
 .pclock { display: grid; grid-template-columns: minmax(0, 1fr) 120px; gap: 8px; align-items: center; margin-top: 6px; font-size: 14px; }
 .ptext { font-size: 12px; color: var(--sub); margin-top: 4px; }
+.photos { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin: 6px 0 10px; }
+.photos > p { grid-column: 1 / -1; margin: 4px 0; }
+.pthumb { padding: 0; border: 1px solid var(--line); border-radius: 8px; background: #f4f6f8; overflow: hidden; display: flex; flex-direction: column; }
+.pthumb img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; }
+.pthumb small { font-size: 10px; color: var(--sub); padding: 2px 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.photo-add { display: block; text-align: center; }
+.photo-view .box { max-width: 100%; }
+.photo-view .pv-img img { width: 100%; height: auto; display: block; border-radius: 6px; }
 .clocksrc { margin-top: 8px; font-size: 14px; }
 .clocksrc .names { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 4px; }
 .clocksrc .names button { padding: 10px 4px; font-size: 15px; }
@@ -450,6 +459,10 @@ let memos = store.get('memos', {});        // 工場名 → { text, at, by }（�
 let memoDrafts = store.get('memoDrafts', {});  // 工場名 → 保存前の入力（圏外や途中で閉じても消えないよう端末に残す）
 let notes = store.get('notes', {});          // 機器ID → { text, at, by, flag, flagAt, flagBy }（機器メモ・フラグ。Excelに書かず、初期化しても消えない）
 let noteDrafts = store.get('noteDrafts', {}); // 機器ID → 保存前の機器メモ
+let archives = store.get('archives', []);       // 過去点検データの一覧 [{ key, plant, year, closedAt, closedBy, count }]
+let arch = null;                                // 開いている過去点検データ { key, plant, year, closedAt, closedBy, devices }（見るだけ。端末には保存しない）
+let photoCount = store.get('photoCount', {});   // 機器ID → 写真の枚数
+let manualImgs = store.get('manualImgs', {});   // 手順画像のキー（シリーズ-手順）→ 画像ID の並び（編集画面で追加したもの）
 // 画面の階層：plants（工場）→ locs（報告書＝Excelファイル）→ list（機器）→ detail（入力）。選んだ工場・報告書は次回も開く
 const nav = store.get('nav', {});
 let view = { screen: nav.plant ? (nav.loc ? 'list' : 'locs') : 'plants', plant: nav.plant || null, loc: nav.loc || null, from: null, id: null, filter: store.get('filter', 'all'), q: '' };
@@ -585,6 +598,9 @@ async function refresh(quiet) {
       });
       store.set('notes', notes);
     }
+    if (j.archives) { archives = j.archives; store.set('archives', archives); }
+    if (j.photoCount) { photoCount = j.photoCount; store.set('photoCount', photoCount); }
+    if (j.manualImgs) { manualImgs = j.manualImgs; store.set('manualImgs', manualImgs); }
     // 設定（機器種類など）。サーバーに設定が無い・古いサーバー・使えない形なら初期値を使う
     if ('config' in j) {
       const c = validConfig(j.config);
@@ -608,7 +624,10 @@ async function refresh(quiet) {
   } catch (e) {
     if (!quiet) alert(e.message);
   }
-  if (view.screen !== 'detail') render();
+  // 過去点検データの機器画面は、自動更新で作り直さない（見ている途中で画面が動かないように）
+  if (view.screen !== 'detail' && view.screen !== 'archDetail') render();
+  // 開いている機器が一覧から無くなった（ほかの人が点検完了にした等）ときは、一覧へ戻す
+  else if (view.screen === 'detail' && !getDev(view.id)) render();
 }
 
 // 未送信の入力を順に送る。失敗しても端末に残し、次の機会に再送する
@@ -764,12 +783,14 @@ function lastTempBlock() {
     <button type="button" data-act="usetemp">この温度を使う</button></div>`;
 }
 
-// 「交換済み」ボタンを付ける部品（フィルター・パッキン類）
-const isFilterPart = name => /ﾌｨﾙﾀ|フィルタ|ﾊﾟｯｷﾝ|パッキン/.test(name || '');
+// 「交換済み」ボタンを付ける部品（フィルター・パッキン・ガスケット類）
+const isFilterPart = name => /ﾌｨﾙﾀ|フィルタ|ﾊﾟｯｷﾝ|パッキン|ｶﾞｽｹｯﾄ|ガスケット/.test(name || '');
 const partsOf = (d, data) => (data.partsEdited && Array.isArray(data.parts) ? data.parts : ((d.info.prev || {}).parts || []));
 const escRe = s => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-// 「交換済み」を押したら記事に「※○○交換実施(2026/11/05)」（押した日）を入れる。同じ部品の行が既にあれば書き換え、外したら消す
+// 「交換済み」は記事には書かない（2026-11-12 から。交換したかどうかは PC の「交換・変更点の一覧」に出す）。
+//   data.replaced[行] に押した日（yyyy-MM-dd）を入れる（前の版は true）。下の applyReplaced は前の版の記事の書き方の参考に残す（呼ばない）
+const replacedDate = () => today();
 function applyReplaced(d, data, n, on) {
   const name = String((partsOf(d, data)[n] || {}).name || '').replace(/[\s　]+/g, '');
   if (!name) return;
@@ -1034,6 +1055,15 @@ const seriesOf = model => {
 const loadImg = src => new Promise(ok => { const img = new Image(); img.onload = () => ok(img); img.onerror = () => ok(null); img.src = src; });
 async function loadManualImages(base) {
   const list = [];
+  // 編集画面で追加した手順画像（サーバー）があれば、そちらを使う。読めなければ web/manual の画像
+  const pids = manualImgs[base] || [];
+  for (const pid of pids) {
+    try {
+      const img = await loadImg(await photoUrl(pid));
+      if (img) { img.className = 'man-img'; list.push(img); }
+    } catch (e) { list.length = 0; break; }
+  }
+  if (list.length) return list;
   for (let n = 1; n <= 20; n++) {
     const name = n === 1 ? base : `${base}-${n}`;
     const img = (await loadImg(`manual/${name}.png`)) || (await loadImg(`manual/${name}.jpg`));
@@ -1235,9 +1265,11 @@ function waitingCheck(d) {
 // ---- 画面 ----
 function render() {
   if (!ready()) return renderSetup();
+  if (String(view.screen).startsWith('arch')) return renderArch();
   if (view.screen === 'detail') return renderDetail();
   // 選んでいた工場・報告書が一覧から無くなった（名前変更など）ときは一つ上の選択に戻す
-  if (view.screen !== 'plants' && devices.length && !devices.some(d => plantOf(d) === view.plant)) view.screen = 'plants';
+  //   （一覧を読み込んだ後で機器が1台も無い＝すべての工場を点検完了にした等のときも、工場の画面へ）
+  if (view.screen !== 'plants' && (devices.length || fetchedAt) && !devices.some(d => plantOf(d) === view.plant)) view.screen = 'plants';
   if (view.screen === 'list' && view.loc !== ALL && !devices.some(d => plantOf(d) === view.plant && fileOf(d) === view.loc)) view.screen = 'locs';
   if (view.screen === 'plants') return renderPlants();
   // 共有メモを入力中（自動更新など）は画面を作り直さない（入力中の文字やカーソルが消えるため）
@@ -1273,8 +1305,8 @@ function plantLabel(p) {
 const isDone = d => ['done', 'pend'].includes(localStatus(d).cls);
 const byName = (a, b) => a.localeCompare(b, 'ja', { numeric: true });
 
-function progress(list) {
-  const done = list.filter(isDone).length;
+function progress(list, doneOf = isDone) {
+  const done = list.filter(doneOf).length;
   const pct = list.length ? Math.round(done / list.length * 100) : 0;
   return `<div class="prog ${list.length && done === list.length ? 'full' : ''}"><div class="bar"><i style="width:${pct}%"></i></div><span class="cnt">完了 ${done}/${list.length}</span></div>`;
 }
@@ -1309,7 +1341,7 @@ function clockSrcRow(d, b) {
   const pend = n.clockSrcPending && n.clockSrcPending[b];
   const who = cur && n.clockSrcBy && !pend ? `<small class="muted">（${h(n.clockSrcBy)}${n.clockSrcAt ? ' ' + h(String(n.clockSrcAt).slice(5, 10).replace('-', '/')) : ''}）</small>` : '';
   return `<div class="clocksrc"><span>表示している時刻 <small class="muted">どちらか1つ（記録のみ・報告書には書きません）</small>${who}</span>
-    <div class="names pick">${CLOCK_SRCS.map(([v, label]) => `<button type="button" class="${cur === v ? 'on' : ''}${pend ? ' wait' : ''}" data-act="clocksrc" data-id="${h(d.id)}" data-b="${b}" data-src="${h(v)}" ${PREVIEW ? 'disabled' : ''}>${h(label)}</button>`).join('')}</div></div>`;
+    <div class="names pick">${CLOCK_SRCS.map(([v, label]) => `<button type="button" class="${cur === v ? 'on' : ''}${pend ? ' wait' : ''}" data-act="clocksrc" data-id="${h(d.id)}" data-b="${b}" data-src="${h(v)}" ${PREVIEW || view.screen === 'archDetail' ? 'disabled' : ''}>${h(label)}</button>`).join('')}</div></div>`;
 }
 
 // すぐ切り替えて見せ、裏でサーバーへ送る（だめなら元に戻す）。選んでいるほうをもう一度押すと取り消し
@@ -1348,7 +1380,7 @@ async function setClockSrc(id, b, v) {
 // 点検シールを貼ったかの確認用スイッチ（全員で共有。データ初期化で外れる）。押しても機器は開かない
 function sealSwitch(d) {
   const on = !!(notes[d.id] || {}).seal;
-  return `<span class="seal ${on ? 'on' : ''}" role="switch" aria-checked="${on}" data-act="seal" data-id="${h(d.id)}"><span class="sl">シール</span><span class="track"><span class="knob"></span></span></span>`;
+  return `<span class="seal ${on ? 'on' : ''}" role="switch" aria-checked="${on}" data-act="seal" data-id="${h(d.id)}"><span class="sl">点検シール</span><span class="track"><span class="knob"></span></span></span>`;
 }
 
 // スイッチはすぐ切り替えて見せ、裏でサーバーへ送る（だめなら元に戻す）
@@ -1380,6 +1412,9 @@ function renderPlants() {
     ${mineSection(devices)}
     <div class="sect">工場を選ぶ</div>
     ${plants.map(p => menuItem('plant', p, plantLabel(p), devices.filter(d => plantOf(d) === p))).join('') || '<p class="muted">機器が登録されていません</p>'}
+    <div class="sect">過去点検データ</div>
+    <button class="menu" data-act="archs"><div class="main"><div class="name">過去点検データ</div>
+      <div class="sub">点検完了にした工場（見るだけ）${archives.length ? '　' + archives.length + ' 件' : '　まだありません'}</div></div><span class="chev">›</span></button>
     <div class="muted">更新 ${h(hm(fetchedAt))}</div>
     <button class="btn" data-act="refresh">一覧を更新</button>
     <button class="btn" data-act="logout" style="margin-top:24px">名前を変更する</button>
@@ -1397,7 +1432,231 @@ function renderLocs() {
     ${menuItem('loc', ALL, 'すべての機器', inPlant)}
     ${memoSection(view.plant)}
     <div class="muted">更新 ${h(hm(fetchedAt))}</div>
-    <button class="btn" data-act="refresh">一覧を更新</button>`;
+    <button class="btn" data-act="refresh">一覧を更新</button>
+    <button class="btn warn" data-act="closeplant" style="margin-top:24px">この工場の点検を完了する（過去点検データへ）</button>`;
+}
+
+// ---- 点検完了（工場の点検を「過去点検データ」へ移す。パスワードはデータ初期化と同じ）----
+async function closePlant() {
+  const plant = view.plant;
+  const inPlant = devices.filter(d => plantOf(d) === plant);
+  const unsent = inPlant.filter(d => drafts[d.id] && drafts[d.id].pending);
+  if (unsent.length) return alert(`この端末に送信していない入力があります（${unsent.map(d => d.tag).slice(0, 5).join('、')}）。送信してから、もう一度押してください。`);
+  const pass = await askText('点検完了のパスワード（データ初期化と同じ）を入力してください。', '', 'password');
+  if (pass == null || !pass.trim()) return;
+  try { await withBusy('確認しています…', () => api('closePlant', { pass: pass.trim(), check: true })); }
+  catch (e) { return alert(e.code === 'offline' ? '点検完了には電波が必要です。' : e.message); }
+  if (!confirm(`「${plantLabel(plant)}」の点検を完了にします。\n・機器のデータは「過去点検データ」へ移り、見るだけになります（入力・Excel反映はできなくなります）\n・この工場は工場の一覧から消えます（来年度の機器一覧の登録で、また出てきます）\n・Excelのファイルは変わりません\nよろしいですか？`)) return;
+  const send = force => withBusy('点検完了にしています…', () => api('closePlant', { plant, pass: pass.trim(), force }));
+  let j;
+  try { j = await send(false); }
+  catch (e) {
+    if (e.code !== 'closeconfirm') return alert(e.message);
+    if (!confirm(`${e.message}。\nこのまま点検完了にしますか？（その機器は、入力が無い・途中のまま保管されます）`)) return;
+    try { j = await send(true); } catch (e2) { return alert(e2.message); }
+  }
+  // この工場の機器の、端末に残った（送信済みの）入力の控えを消す
+  inPlant.forEach(d => { if (drafts[d.id] && !drafts[d.id].pending) delete drafts[d.id]; });
+  saveDrafts();
+  alert(`点検完了にしました（${j.closed} 台）。トップの「過去点検データ」から見られます。`);
+  view.screen = 'plants'; view.plant = null; view.loc = null; saveNav();
+  await withBusy('読み込み中…', () => refresh(true));
+  render();
+}
+
+// ---- 過去点検データ（見るだけ）。画面：archs（一覧）→ archLocs（報告書）→ archList（機器）→ archDetail（機器の内容）----
+const archDev = id => arch && arch.devices.find(d => d.id === id);
+const archLabel = a => `${a.plant}${a.year ? ' ' + a.year + '年度' : ''}`;
+// 機器画面で使う「今の機器」（過去点検データを見ているときはその機器）
+const curDev = () => view.screen === 'archDetail' ? archDev(view.id) : getDev(view.id);
+const archBadge = d => {
+  if (d.status === ST.DONE) return { cls: 'done', text: '完了' };
+  if (d.status === ST.WORK) return { cls: 'work', text: '作業中のまま' };
+  if (d.data && d.worker) return { cls: 'temp', text: `一時保存(${d.worker})` };
+  return { cls: 'todo', text: '未着手' };
+};
+
+async function openArchive(key) {
+  try {
+    if (!arch || arch.key !== key) arch = await withBusy('過去点検データを読み込んでいます…', () => api('archive', { archKey: key }));
+  } catch (e) { return alert(e.code === 'offline' ? '過去点検データを見るには電波が必要です。' : e.message); }
+  view.screen = 'archLocs'; view.archLoc = null;
+  render(); window.scrollTo(0, 0);
+}
+
+function renderArch() {
+  const s = view.screen;
+  if (s !== 'archs' && !arch) { view.screen = 'archs'; return renderArch(); }
+  if (s === 'archs') {
+    renderTop('過去点検データ', BACK_LABEL.plants);
+    const list = archives.slice().sort((a, b) => String(b.closedAt).localeCompare(String(a.closedAt)));
+    $('#app').innerHTML = `<div class="sect">点検完了にした工場（見るだけ）</div>
+      ${list.map(a => `<button class="menu" data-act="archopen" data-key="${h(a.key)}"><div class="main"><div class="name">${h(archLabel(a))}</div>
+        <div class="sub">点検完了 ${h(hm(a.closedAt))}${a.closedBy ? '・' + h(a.closedBy) : ''}・${a.count} 台</div></div><span class="chev">›</span></button>`).join('') || '<p class="muted">まだありません。工場の画面の「この工場の点検を完了する」で、ここに移ります。</p>'}
+      <button class="btn" data-act="refresh">一覧を更新</button>`;
+    return;
+  }
+  const head = `<div class="notice done">過去点検データ：${h(archLabel(arch))}（${h(hm(arch.closedAt))} 点検完了${arch.closedBy ? '・' + h(arch.closedBy) : ''}）。見るだけです。</div>`;
+  if (s === 'archLocs') {
+    renderTop(archLabel(arch), '過去点検');
+    const files = [...new Set(arch.devices.map(fileOf))].sort(byName);
+    const item = (key, name, list) => `<button class="menu" data-act="archloc" data-key="${h(key)}"><div class="main"><div class="name">${h(name)}</div>${progress(list, d => d.status === ST.DONE)}</div><span class="chev">›</span></button>`;
+    $('#app').innerHTML = `${head}<div class="sect">報告書（Excel）を選ぶ</div>
+      ${files.map(f => item(f, fileLabel(f), arch.devices.filter(d => fileOf(d) === f))).join('')}
+      ${item(ALL, 'すべての機器', arch.devices)}
+      <button class="btn warn" data-act="archreopen" style="margin-top:32px">点検中に戻す（間違えて点検完了にしたとき）</button>`;
+    return;
+  }
+  if (s === 'archList') {
+    renderTop(view.archLoc === ALL ? 'すべての機器' : fileLabel(view.archLoc || ''), '報告書');
+    const list = arch.devices.filter(d => view.archLoc === ALL || fileOf(d) === view.archLoc).sort((a, b) => byName(a.sheet || '', b.sheet || ''));
+    $('#app').innerHTML = `${head}${list.map(d => {
+      const b = archBadge(d);
+      return `<button class="item" data-act="archdev" data-id="${h(d.id)}"><div class="main"><div class="tag">${h(d.tag)}</div><div class="sub">${h(d.title)}${d.kind !== KIND.TOUCH && d.info && d.info.loc ? '（' + h(d.info.loc) + '）' : ''}</div></div>
+        <span class="right"><span class="badge st-${b.cls}">${h(b.text)}</span>${photoCount[d.id] ? `<span class="muted" style="font-size:11px">写真 ${photoCount[d.id]}</span>` : ''}</span></button>`;
+    }).join('')}`;
+    return;
+  }
+  // archDetail
+  const d = archDev(view.id);
+  if (!d) { view.screen = 'archList'; return renderArch(); }
+  renderTop(d.tag, '一覧');
+  const b = archBadge(d);
+  $('#app').innerHTML = `${infoCard(d)}${head}
+    <div class="notice">この時の状態：${h(b.text)}${d.updatedAt ? `（${h(hm(d.updatedAt))}${d.worker ? '・' + h(d.worker) : ''}）` : ''}${d.exportedAt ? '・Excel反映済み' : ''}</div>
+    ${d.data ? `<section class="card">${form(d, normalize(d, d.data), false)}</section>` : '<p class="muted">この時は入力がありません。</p>'}
+    ${photoSection(d)}`;
+  if (d.data) updateDevs(d, normalize(d, d.data));
+  loadPhotos(d);
+}
+
+async function reopenArchive() {
+  if (!arch) return;
+  const pass = await askText(`「${archLabel(arch)}」を点検中に戻します。\nパスワード（データ初期化と同じ）を入力してください。`, '', 'password');
+  if (pass == null || !pass.trim()) return;
+  if (!confirm(`「${archLabel(arch)}」を点検中に戻します（工場の一覧に戻り、入力・Excel反映ができるようになります）。よろしいですか？`)) return;
+  try {
+    const j = await withBusy('戻しています…', () => api('reopenArchive', { archKey: arch.key, pass: pass.trim() }));
+    alert(`点検中に戻しました（${j.reopened} 台）。`);
+  } catch (e) { return alert(e.code === 'offline' ? '電波が必要です。' : e.message); }
+  arch = null;
+  view.screen = 'plants'; saveNav();
+  await withBusy('読み込み中…', () => refresh(true));
+  render();
+}
+
+// ---- 写真（機器ごと。全員で共有。初期化・点検完了でも消えない。画像は Googleドライブ）----
+const thumbCache = {};   // 機器ID → [{ pid, at, by, caption, thumb }]（一覧用の小さい画像）
+const photoCache = new Map();   // 画像ID → data URL（元の大きさ。新しい 12 枚だけ覚える）
+function photoSection(d) {
+  if (PREVIEW) return '';
+  const n = photoCount[d.id] || 0;
+  return `<section class="card" id="photo-card"><h3 style="margin-top:0">写真 <small class="muted">全員で共有・データ初期化や点検完了でも消えません</small></h3>
+    <div class="photos" id="photos" data-for="${h(d.id)}">${photoGrid(d.id) || (n ? '<p class="muted">読み込み中…</p>' : '<p class="muted">まだありません</p>')}</div>
+    <label class="btn small photo-add">写真を撮る・追加する<input type="file" accept="image/*" multiple data-photo-add="${h(d.id)}" style="display:none"></label></section>`;
+}
+function photoGrid(id) {
+  const list = thumbCache[id];
+  if (!list || !list.length) return '';
+  return list.map(p => `<button type="button" class="pthumb" data-act="photo" data-pid="${h(p.pid)}" data-id="${h(id)}">
+    ${p.thumb ? `<img src="data:image/jpeg;base64,${p.thumb}" alt="">` : '<span>写真</span>'}<small>${h(hm(p.at).slice(0, 5))} ${h(p.by || '')}</small></button>`).join('');
+}
+function drawPhotos(id) {
+  const el = $('#photos');
+  if (!el || el.dataset.for !== id) return;
+  el.innerHTML = photoGrid(id) || '<p class="muted">まだありません</p>';
+}
+const photoFetchedAt = {};  // 機器ID → 一覧用の画像を取りに行った時刻（画面を作り直すたびに取りに行かないように）
+async function loadPhotos(d) {
+  if (PREVIEW || !(photoCount[d.id] || thumbCache[d.id])) return;
+  // 1分以内に取りに行った機器は、手元の一覧を使う（枚数が変わっていれば取り直す）
+  if (thumbCache[d.id] && thumbCache[d.id].length === (photoCount[d.id] || 0) && Date.now() - (photoFetchedAt[d.id] || 0) < 60000) return;
+  photoFetchedAt[d.id] = Date.now();
+  try {
+    const j = await netTask(() => api('photos', { target: d.id }));
+    thumbCache[d.id] = j.photos;
+    photoCount[d.id] = j.photos.length;
+    store.set('photoCount', photoCount);
+  } catch (e) {
+    const el = $('#photos');
+    if (el && el.dataset.for === d.id && !thumbCache[d.id]) el.innerHTML = `<p class="muted">${e.code === 'offline' ? '写真を見るには電波が必要です' : h(e.message)}</p>`;
+    return;
+  }
+  drawPhotos(d.id);
+}
+// 画像を縮める（長い辺を max ピクセルに。JPEG）。base64 を返す
+async function shrinkImage(file, max, q) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await loadImg(url);
+    if (!img || !img.naturalWidth) throw new Error('画像を読み込めませんでした（形式を確認してください）');
+    const s = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(img.naturalWidth * s));
+    c.height = Math.max(1, Math.round(img.naturalHeight * s));
+    const g = c.getContext('2d');
+    g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);  // PNG の透明部分は白に
+    g.drawImage(img, 0, 0, c.width, c.height);
+    return c.toDataURL('image/jpeg', q).split(',')[1];
+  } finally { URL.revokeObjectURL(url); }
+}
+async function addPhotos(id, files, dev) {
+  const d = dev || curDev() || getDev(id);
+  if (!d || !files.length) return;
+  let done = 0;
+  for (let i = 0; i < files.length; i++) {
+    try {
+      const j = await withBusy(`写真を送っています（${i + 1}/${files.length}）…`, async () => {
+        const b64 = await shrinkImage(files[i], 1600, 0.82);
+        const thumb = await shrinkImage(files[i], 240, 0.7);
+        return api('addPhoto', { target: d.id, tag: d.tag, plant: d.plant, b64, thumb, mime: 'image/jpeg' });
+      });
+      (thumbCache[d.id] = thumbCache[d.id] || []).push(j.photo);
+      photoCount[d.id] = (photoCount[d.id] || 0) + 1;
+      store.set('photoCount', photoCount);
+      done++;
+      drawPhotos(d.id);
+    } catch (e) {
+      alert(e.code === 'offline' ? '写真を送るには電波が必要です。電波のある所でもう一度追加してください。' : '写真を送れませんでした：' + e.message);
+      break;
+    }
+  }
+  return done;
+}
+async function photoUrl(pid) {
+  if (photoCache.has(pid)) return photoCache.get(pid);
+  const j = await api('getPhoto', { pid });
+  const url = `data:${j.mime || 'image/jpeg'};base64,${j.b64}`;
+  photoCache.set(pid, url);
+  while (photoCache.size > 12) photoCache.delete(photoCache.keys().next().value);
+  return url;
+}
+function showPhoto(id, pid) {
+  const p = (thumbCache[id] || []).find(x => x.pid === pid) || {};
+  const el = document.createElement('div');
+  el.className = 'modal photo-view';
+  el.innerHTML = `<div class="box"><div class="pv-img">${p.thumb ? `<img src="data:image/jpeg;base64,${p.thumb}" alt="">` : ''}<p class="muted" data-pv="msg">読み込み中…</p></div>
+    <div class="muted">${h(hm(p.at))}${p.by ? '　' + h(p.by) : ''}</div>
+    <button class="btn" data-pv="close">閉じる</button><button class="btn warn small" data-pv="del">この写真を削除</button></div>`;
+  el.addEventListener('click', async e => {
+    if (e.target === el || e.target.closest('[data-pv=close]')) return el.remove();
+    if (e.target.closest('[data-pv=del]')) {
+      if (!confirm('この写真を削除します（全員の画面から消えます）。よろしいですか？')) return;
+      try {
+        await withBusy('削除しています…', () => api('deletePhoto', { pid }));
+        thumbCache[id] = (thumbCache[id] || []).filter(x => x.pid !== pid);
+        photoCount[id] = Math.max(0, (photoCount[id] || 1) - 1);
+        store.set('photoCount', photoCount);
+        el.remove();
+        drawPhotos(id);
+      } catch (err) { alert(err.code === 'offline' ? '削除には電波が必要です。' : err.message); }
+    }
+  });
+  document.body.appendChild(el);
+  photoUrl(pid).then(url => {
+    if (!el.isConnected) return;
+    el.querySelector('.pv-img').innerHTML = `<img src="${url}" alt="">`;
+  }).catch(e => { const m = el.querySelector('[data-pv=msg]'); if (m) m.textContent = e.code === 'offline' ? '元の大きさの写真を見るには電波が必要です' : e.message; });
 }
 
 // ---- 共有メモ（工場ごと。全員で見て書ける。データ初期化しても消えない）----
@@ -1540,7 +1799,7 @@ function infoCard(d) {
 
 // ---- 機器メモ・フラグ（全員で共有。Excelには書かない。データ初期化しても消えない）----
 function flagButton(d) {
-  if (PREVIEW) return '';
+  if (PREVIEW || view.screen === 'archDetail') return '';
   const on = !!(notes[d.id] || {}).flag;
   return `<button type="button" class="flagbtn ${on ? 'on' : ''}" data-act="flag">${on ? 'フラグ中' : 'フラグ'}</button>`;
 }
@@ -1686,9 +1945,11 @@ function renderDetail() {
   $('#app').innerHTML = `${infoCard(d)}${head}
     ${data ? `<section class="card">${form(d, data, editable)}</section>` : ''}
     ${PREVIEW ? '' : devMemoSection(d)}
+    ${photoSection(d)}
     <div class="actions"><div class="inner">${actions}</div></div>`;
   if (data) updateDevs(d, data);
   markMissing();
+  loadPhotos(d);
 }
 
 // ---- 入力フォーム ----
@@ -2089,7 +2350,7 @@ function setWorker(name) {
   });
 }
 
-// 機器情報を現場の表示に合わせて変更する。変更したら記事に1行追加するかを選ぶ
+// 機器情報を現場の表示に合わせて変更する。記事には書かない（2026-11-12 から。変更点は PC の「交換・変更点の一覧」に出す）
 async function editField(key) {
   const d = getDev(view.id);
   const dr = drafts[view.id];
@@ -2104,13 +2365,7 @@ async function editField(key) {
   if (nv === (c.value || '')) {
     if (dr.data.fields[key]) delete dr.data.fields[key].value;  // 元に戻した
   } else {
-    const line = `${checkName(d, c)}：${c.value || '（空欄）'}が${nv || '（空欄）'}に変更されていた`;
-    const add = await choose(`記事に次の1行を追加しますか？\n「${line}」`, [
-      { key: 'add', label: '記事に追加する', cls: 'primary' },
-      { key: 'no', label: '追加しない' },
-    ]);
-    dr.data.fields[key] = Object.assign({}, f, { value: nv });
-    if (add === 'add') dr.data.note = (String(dr.data.note || '').replace(/\s+$/, '') + '\n' + line).replace(/^\n/, '');
+    dr.data.fields[key] = Object.assign({}, f, { value: nv, at: today(), by: cfg.name });
   }
   touchDraft(view.id);
   renderDetail();
@@ -2121,7 +2376,12 @@ document.addEventListener('click', async e => {
   const b = e.target.closest('[data-act]');
   if (!b) return;
   const act = b.dataset.act;
-  if (act === 'back') {
+  if (act === 'back' && String(view.screen).startsWith('arch')) {
+    view.screen = { archDetail: 'archList', archList: 'archLocs', archLocs: 'archs' }[view.screen] || 'plants';
+    render();
+    window.scrollTo(0, 0);
+  }
+  else if (act === 'back') {
     if (view.screen === 'detail') leaveDetail();
     else view.screen = view.screen === 'list' ? 'locs' : 'plants';
     render();
@@ -2175,7 +2435,14 @@ document.addEventListener('click', async e => {
   else if (act === 'finish') finishWork();
   else if (act === 'insp') toggleInspector(b.dataset.name);
   else if (act === 'worker') setWorker(b.dataset.name);
-  else if (act === 'details') { view.details = !view.details; renderDetail(); }
+  else if (act === 'details') { view.details = !view.details; if (view.screen === 'archDetail') renderArch(); else renderDetail(); }
+  else if (act === 'archs') { view.screen = 'archs'; render(); window.scrollTo(0, 0); refresh(true); }
+  else if (act === 'archopen') openArchive(b.dataset.key);
+  else if (act === 'archloc') { view.archLoc = b.dataset.key; view.screen = 'archList'; render(); window.scrollTo(0, 0); }
+  else if (act === 'archdev') { Object.assign(view, { screen: 'archDetail', id: b.dataset.id, details: false }); render(); window.scrollTo(0, 0); }
+  else if (act === 'archreopen') reopenArchive();
+  else if (act === 'closeplant') closePlant();
+  else if (act === 'photo') showPhoto(b.dataset.id, b.dataset.pid);
   else if (act === 'jst') showJst();
   else if (act === 'pvna') {
     const path = b.dataset.path;
@@ -2187,7 +2454,7 @@ document.addEventListener('click', async e => {
       removePvToken(getDev(view.id), data, path);
     });
   }
-  else if (act === 'manual') { const d = getDev(view.id); if (d) showManual(d); }
+  else if (act === 'manual') { const d = curDev(); if (d) showManual(d); }
   else if (act === 'resetdata') resetData();
   else if (act === 'partsedit') {
     editDraft(data => {
@@ -2221,7 +2488,7 @@ document.addEventListener('click', async e => {
       data.parts.splice(n, 1);
       // 「交換済み」の目印を、詰めた後の行番号に合わせる
       const r = {};
-      Object.keys(data.replaced).forEach(k => { if (+k < n) r[k] = true; else if (+k > n) r[+k - 1] = true; });
+      Object.keys(data.replaced).forEach(k => { if (+k < n) r[k] = data.replaced[k]; else if (+k > n) r[+k - 1] = data.replaced[k]; });
       data.replaced = r;
     });
   }
@@ -2230,8 +2497,7 @@ document.addEventListener('click', async e => {
   else if (act === 'replaced') {
     editDraft(data => {
       const n = b.dataset.n;
-      if (data.replaced[n]) delete data.replaced[n]; else data.replaced[n] = true;
-      applyReplaced(getDev(view.id), data, n, !!data.replaced[n]);
+      if (data.replaced[n]) delete data.replaced[n]; else data.replaced[n] = replacedDate();
     });
   }
   else if (act === 'testsedit') { view.testsEdit = !view.testsEdit; renderDetail(); }
@@ -2301,6 +2567,15 @@ function onEdit(e) {
   if (view.showMissing) markMissing();
 }
 document.addEventListener('input', onEdit);
+// 写真を選んだ（撮った）とき
+document.addEventListener('change', async e => {
+  const t = e.target;
+  if (!t || !t.dataset || !t.dataset.photoAdd) return;
+  const files = [...(t.files || [])];
+  const id = t.dataset.photoAdd;
+  t.value = '';  // 同じ写真をもう一度選んでも反応するように
+  await addPhotos(id, files);
+});
 // iPhone の Safari は、タッチを受け取る処理が無いと「押している間」の見た目（:active）を出さない
 document.addEventListener('touchstart', () => {}, { passive: true });
 document.addEventListener('compositionend', e => { if (e.target.id === 'q') onEdit(e); });

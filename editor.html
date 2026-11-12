@@ -64,6 +64,18 @@ th { background: #eef2f5; }
 .warnbox { background: #fff7e6; border: 1px solid #f0c58f; border-radius: 8px; padding: 8px 10px; margin: 8px 0; }
 .errbox { background: #fdecea; border: 1px solid #f5b5ae; border-radius: 8px; padding: 8px 10px; margin: 8px 0; }
 .nav { display: flex; gap: 4px; }
+.grp { display: flex; align-items: center; gap: 6px; padding: 6px 8px; margin: 6px 0 4px; border-radius: 8px; background: #eef2f5; cursor: pointer; font-weight: 700; user-select: none; }
+.grp:hover { background: #e2e9ef; }
+.grp .arr { display: inline-block; width: 14px; color: var(--pri); }
+.grp .gc { margin-left: auto; font-weight: 400; font-size: 12px; color: var(--sub); }
+.grp-body { margin-left: 14px; }
+.tlist .t.dev { padding: 5px 8px; }
+.thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; margin: 8px 0; }
+.thumbs .th { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #f7f9fb; font-size: 11.5px; }
+.thumbs .th img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; cursor: zoom-in; }
+.thumbs .th .m { padding: 3px 6px; display: flex; justify-content: space-between; gap: 4px; align-items: center; }
+.imgcell { cursor: pointer; }
+.imgcell.on { outline: 2px solid var(--pri); outline-offset: -2px; }
 @media (max-width: 1250px) { .wrap { grid-template-columns: 280px 1fr; } .col.pv { grid-column: 1 / -1; } }
 </style>
 </head>
@@ -165,6 +177,8 @@ async function loadServer() {
   S.devices = j.devices || [];
   S.names = j.names || [];
   S.published = j.config || null;
+  S.photoCount = j.photoCount || {};
+  S.manualImgs = j.manualImgs || {};
   // 版の番号はサーバーの CONFIG_VER（configVer）を使う（古いサーバーは無いので設定の中の version）
   S.curVer = j.configVer != null ? Number(j.configVer) || 0 : (j.config && j.config.version) || 0;
 }
@@ -277,15 +291,17 @@ function renderLeft() {
   const tabs = `<div class="tabs"><button class="${S.tab === 'types' ? 'on' : ''}" data-act="tab" data-t="types">機器種類</button>
     <button class="${S.tab === 'customs' ? 'on' : ''}" data-act="tab" data-t="customs">追加した要素</button>
     <button class="${S.tab === 'series' ? 'on' : ''}" data-act="tab" data-t="series">手順画像のシリーズ</button>
+    <button class="${S.tab === 'photos' ? 'on' : ''}" data-act="tab" data-t="photos">写真・画像</button>
     <button class="${S.tab === 'history' ? 'on' : ''}" data-act="tab" data-t="history">履歴</button></div>`;
   const pubTypes = (effPublished() || {}).types || [];
-  const list = S.draft.types.map((t, i) => {
+  // 様式（計器・タッチパネル・調節弁）ごとにまとめ、› を押すと中の種類を開く（判定の順は様式の中の上から順）
+  const list = groupHtml('types', S.draft.types.map((t, i) => ({ t, i })), x => x.t.base, ({ t, i }, n) => {
     const p = pubTypes.find(x => x.id === t.id);
     const ch = !p || JSON.stringify(p) !== JSON.stringify(t);
     return `<div class="t ${i === S.sel ? 'on' : ''} ${ch ? 'changed' : ''}" data-act="sel" data-i="${i}">
-      <span class="cnt">${devCount(t.id)} 台</span><div class="nm"><span class="badge b-${h(t.base)}">${h(t.base)}</span>${i + 1}. ${h(t.name)}</div>
+      <span class="cnt">${devCount(t.id)} 台</span><div class="nm">${n + 1}. ${h(t.name)}</div>
       <div class="cond">${h(whenText(t))}</div></div>`;
-  }).join('');
+  }, items => `${items.length} 種類・${items.reduce((s, x) => s + devCount(x.t.id), 0)} 台`, S.draft.types[S.sel] && S.draft.types[S.sel].base);
   const none = S.devices.filter(d => !(S.classDraft[d.id] || {}).type).length;
   $('#left').innerHTML = `<div class="card">${tabs}
     ${S.tab === 'types' ? `<p class="muted">上から順に調べ、最初に当てはまった種類になります。様式（計器・調節弁・タッチパネル）は報告書のシートの形で、登録のときに決まります。</p>
@@ -296,13 +312,29 @@ function renderLeft() {
       <p class="muted">黄色＝本番の設定から変えたもの</p>` : ''}
     ${S.tab === 'customs' ? customsListHtml() : ''}
     ${S.tab === 'series' ? seriesHtml() : ''}
+    ${S.tab === 'photos' ? photosLeftHtml() : ''}
     ${S.tab === 'history' ? '<div id="hist"><p class="muted">読み込み中…</p></div>' : ''}</div>`;
   if (S.tab === 'history') renderHistory();
+}
+
+// 左の一覧を様式ごとの見出し（› で開く・閉じる）にまとめる
+//   items：並べるもの、baseOf：様式、row(item, 様式の中の番号)：1行、count(items)：見出しの右の数、selBase：選んでいるものの様式（初めは開いておく）
+const KIND_ORDER = ['計器', 'タッチパネル', '調節弁'];
+S.grp = ls.get('kensa-editor.grp', {});
+function groupHtml(scope, items, baseOf, row, count, selBase) {
+  return KIND_ORDER.map(base => {
+    const list = items.filter(x => baseOf(x) === base);
+    const k = scope + ':' + base;
+    const open = S.grp[k] != null ? S.grp[k] : base === selBase;
+    return `<div class="grp" data-act="grp" data-g="${h(k)}"><span class="arr">${open ? '▾' : '›'}</span><span class="badge b-${h(base)}">${h(base)}</span><span class="gc">${h(count(list))}</span></div>
+      ${open ? `<div class="grp-body">${list.map((x, n) => row(x, n)).join('') || '<p class="muted">なし</p>'}</div>` : ''}`;
+  }).join('');
 }
 
 function renderMid() {
   if (!S.loaded) return;
   if (S.tab === 'series') { $('#mid').innerHTML = seriesHelp(); return; }
+  if (S.tab === 'photos') { $('#mid').innerHTML = photosMidHtml(); showStatic(); return; }
   if (S.tab === 'customs') { $('#mid').innerHTML = customMidHtml(); return; }
   if (S.tab === 'history') { $('#mid').innerHTML = `<div class="card"><h2>履歴について</h2><p class="muted">本番に反映するたびに新しい版として残ります。「この版に戻す」で、その版をすぐ本番にできます（iPhone は次に一覧を更新したときに切り替わります）。「編集に読み込む」は下書きに読み込むだけで、本番は変わりません。</p></div>`; return; }
   const t = S.draft.types[S.sel];
@@ -466,11 +498,11 @@ function customsListHtml() {
   const list = S.draft.customs || [];
   const kinds = S.defs.customKinds || {};
   return `<p class="muted">iPhone の入力画面に、文字・数値・選択・チェックの欄を追加します。様式（計器・調節弁・タッチパネル）ごとに作り、機器種類ごとに出す／出さないを選べます。</p>
-    <div class="tlist">${list.map((c, i) => {
+    <div class="tlist">${list.length ? groupHtml('customs', list.map((c, i) => ({ c, i })), x => x.c.base, ({ c, i }) => {
       const p = customProblems(c);
-      return `<div class="t ${i === S.csel ? 'on' : ''}" data-act="csel" data-i="${i}"><div class="nm"><span class="badge b-${h(c.base)}">${h(c.base)}</span>${h(c.label || '（名前なし）')}</div>
+      return `<div class="t ${i === S.csel ? 'on' : ''}" data-act="csel" data-i="${i}"><div class="nm">${h(c.label || '（名前なし）')}</div>
         <div class="cond">${h(kinds[c.kind] || '')}${c.write && c.write.cell ? '　Excel ' + h(normCell(c.write.cell)) : ''}${c.note && c.note.template ? '　記事あり' : ''}${p.errs.length ? '　<span class="ng">要修正</span>' : ''}</div></div>`;
-    }).join('') || '<p class="muted">まだありません</p>'}</div>
+    }, items => `${items.length} 件`, list[S.csel] && list[S.csel].base) : '<p class="muted">まだありません</p>'}</div>
     <div class="row"><button data-act="addCustom">＋ 要素を追加</button><button data-act="dupCustom">複製</button>
       <button data-act="upCustom">↑</button><button data-act="downCustom">↓</button><button class="del" data-act="delCustom">削除</button></div>`;
 }
@@ -517,6 +549,133 @@ function renderCustomLive() {
   if (!c) return;
   const m = $('#cu-msgs'); if (m) m.innerHTML = customMsgs(customProblems(c));
   const i = $('#cu-info'); if (i) i.innerHTML = customInfo(c).replace('class="info"', 'class="info" style="margin-left:0"');
+}
+
+// ---- 写真・画像（機器の写真＝iPhone で撮るものと同じ／手順画像＝手順ボタンで出す画像）----
+//   写真は設定（下書き・本番に反映）とは別で、追加・削除するとすぐサーバー（Googleドライブ）に入る
+S.ph = { mode: 'dev', dev: '', man: '', list: null, err: '' };
+const PROC_LABEL = { clock: '時刻合わせ', brightness: '輝度調整', bias: 'PVフィルタ・バイアス' };
+function photosLeftHtml() {
+  const P = S.ph;
+  const mode = `<div class="tabs"><button class="${P.mode === 'dev' ? 'on' : ''}" data-act="phmode" data-m="dev">機器の写真</button>
+    <button class="${P.mode === 'manual' ? 'on' : ''}" data-act="phmode" data-m="manual">手順画像</button></div>`;
+  if (P.mode === 'manual') {
+    const series = S.draft.series || [];
+    return mode + `<p class="muted">シリーズ（「手順画像のシリーズ」タブ）と手順ごとに画像を追加できます。追加した画像は、GitHub の web/manual の画像より優先して出ます。追加・削除にはパスワードが必要です。</p>
+      <div class="tlist">${series.map(s => {
+        const k = 'man:' + s.key;
+        const open = S.grp[k] != null ? S.grp[k] : String(P.man).startsWith(s.key + '-');
+        const procs = Object.keys(PROC_LABEL);
+        const total = procs.reduce((n, p) => n + ((S.manualImgs || {})[s.key + '-' + p] || []).length, 0);
+        return `<div class="grp" data-act="grp" data-g="${h(k)}"><span class="arr">${open ? '▾' : '›'}</span>${h(s.name)}<span class="muted">${h(s.key)}</span><span class="gc">追加 ${total} 枚</span></div>
+          ${open ? `<div class="grp-body">${procs.map(p => {
+            const key = s.key + '-' + p, n = ((S.manualImgs || {})[key] || []).length;
+            return `<div class="t dev ${P.man === key ? 'on' : ''}" data-act="phman" data-k="${h(key)}"><span class="cnt">${n ? '追加 ' + n + ' 枚' : ''}</span><div class="nm">${h(PROC_LABEL[p])}</div><div class="cond">${h(key)}</div></div>`;
+          }).join('')}</div>` : ''}`;
+      }).join('') || '<p class="muted">シリーズがありません</p>'}</div>`;
+  }
+  const devs = S.devices.slice().sort((a, b) => `${a.plant}|${a.file}|${a.sheet}`.localeCompare(`${b.plant}|${b.file}|${b.sheet}`, 'ja', { numeric: true }));
+  const cnt = id => (S.photoCount || {})[id] || 0;
+  return mode + `<p class="muted">機器ごとの写真です（iPhone で撮った写真もここに出ます）。全員で共有し、データ初期化・点検完了でも消えません。</p>
+    <div class="tlist">${groupHtml('phdev', devs, d => d.kind, d => `<div class="t dev ${P.dev === d.id ? 'on' : ''}" data-act="phdev" data-id="${h(d.id)}">
+      <span class="cnt">${cnt(d.id) ? '写真 ' + cnt(d.id) : ''}</span><div class="nm">${h(d.tag)}</div><div class="cond">${h(d.sheet)}　${h(d.file)}</div></div>`,
+      list => `${list.length} 台・写真 ${list.reduce((n, d) => n + cnt(d.id), 0)} 枚`, (S.devices.find(d => d.id === P.dev) || {}).kind)}</div>`;
+}
+function photosMidHtml() {
+  const P = S.ph;
+  const thumbs = () => P.err ? `<div class="errbox">${h(P.err)}</div>` : P.list == null ? '<p class="muted">読み込み中…</p>'
+    : P.list.length ? `<div class="thumbs">${P.list.map(p => `<div class="th"><img src="${p.thumb ? 'data:image/jpeg;base64,' + p.thumb : ''}" data-act="phview" data-pid="${h(p.pid)}" alt="">
+        <div class="m"><span>${h(String(p.at).slice(5, 16).replace('-', '/'))}<br>${h(p.by || '')}</span><button class="small del" data-act="phdel" data-pid="${h(p.pid)}">削除</button></div></div>`).join('')}</div>`
+    : '<p class="muted">まだありません</p>';
+  if (P.mode === 'manual') {
+    if (!P.man) return '<div class="card"><h2>手順画像</h2><p class="muted">左でシリーズの › を押し、手順を選んでください。</p></div>';
+    return `<div class="card"><h2>手順画像：${h(P.man)}</h2>
+      <p class="muted">ここで追加した画像が、上から順に手順ボタンで出ます（追加した順）。1枚も無いときは GitHub の web/manual/${h(P.man)}.png（-2.png …）が出ます。</p>
+      <div class="row"><label>画像を追加</label><input type="file" accept="image/*" multiple data-phadd="manual"></div>
+      <h3>追加した画像</h3>${thumbs()}
+      <h3>GitHub の画像（web/manual）</h3><div id="ph-static" class="thumbs"><span class="muted">確認中…</span></div></div>`;
+  }
+  const d = S.devices.find(x => x.id === P.dev);
+  if (!d) return '<div class="card"><h2>機器の写真</h2><p class="muted">左で様式の › を押し、機器を選んでください。</p></div>';
+  return `<div class="card"><h2>${h(d.tag)} の写真</h2><p class="muted">${h(d.plant || '')}　${h(d.file)}　${h(d.sheet)}</p>
+    <div class="row"><label>写真を追加</label><input type="file" accept="image/*" multiple data-phadd="dev"></div>
+    ${thumbs()}</div>`;
+}
+async function loadPhotoList() {
+  const P = S.ph;
+  const key = P.mode === 'manual' ? P.man : P.dev;
+  if (!key) return;
+  P.list = null; P.err = '';
+  try {
+    const j = await api('photos', { kind: P.mode, target: key });
+    if ((P.mode === 'manual' ? P.man : P.dev) !== key) return;
+    P.list = j.photos;
+  } catch (e) { P.err = e.message; }
+  if (S.tab === 'photos') { $('#mid').innerHTML = photosMidHtml(); showStatic(); }
+}
+// GitHub（web/manual）に置いた画像を、ある分だけ出す
+async function showStatic() {
+  const el = $('#ph-static');
+  if (!el) return;
+  const base = S.ph.man, out = [];
+  const load = src => new Promise(ok => { const im = new Image(); im.onload = () => ok(src); im.onerror = () => ok(null); im.src = src; });
+  for (let n = 1; n <= 20; n++) {
+    const name = n === 1 ? base : `${base}-${n}`;
+    const src = (await load(`manual/${name}.png`)) || (await load(`manual/${name}.jpg`));
+    if (!src) break;
+    out.push(src);
+  }
+  if (el.isConnected && S.ph.man === base) el.innerHTML = out.map(s => `<div class="th"><img src="${h(s)}" alt=""><div class="m">${h(s.replace('manual/', ''))}</div></div>`).join('') || '<span class="muted">なし</span>';
+}
+async function shrinkImage(file, max, q) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise(ok => { const im = new Image(); im.onload = () => ok(im); im.onerror = () => ok(null); im.src = url; });
+    if (!img || !img.naturalWidth) throw new Error(`「${file.name}」を画像として読めませんでした`);
+    const s = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(img.naturalWidth * s)); c.height = Math.max(1, Math.round(img.naturalHeight * s));
+    const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(img, 0, 0, c.width, c.height);
+    return c.toDataURL('image/jpeg', q).split(',')[1];
+  } finally { URL.revokeObjectURL(url); }
+}
+async function addPhotoFiles(kind, files) {
+  const P = S.ph;
+  const key = kind === 'manual' ? P.man : P.dev;
+  const d = S.devices.find(x => x.id === P.dev);
+  if (!key || !files.length) return;
+  if (kind === 'manual' && !S.pass && !(await askPass())) return;
+  $('#st').textContent = '画像を送っています…';
+  for (let i = 0; i < files.length; i++) {
+    try {
+      $('#st').textContent = `画像を送っています（${i + 1}/${files.length}）…`;
+      const b64 = await shrinkImage(files[i], kind === 'manual' ? 2000 : 1600, kind === 'manual' ? 0.9 : 0.82);
+      const thumb = await shrinkImage(files[i], 240, 0.7);
+      await api('addPhoto', Object.assign({ kind, target: key, b64, thumb, mime: 'image/jpeg' }, kind === 'manual' ? { pass: S.pass } : { tag: d && d.tag, plant: d && d.plant }));
+    } catch (e) {
+      if (e.code === 'badpass') S.pass = '';
+      alert(`「${files[i].name}」を追加できませんでした：${e.message}`);
+      break;
+    }
+  }
+  await refreshPhotoIndex();
+  renderHeader();
+  await loadPhotoList();
+}
+async function refreshPhotoIndex() {
+  try { const j = await api('list'); S.photoCount = j.photoCount || {}; S.manualImgs = j.manualImgs || {}; } catch (e) { /* 数は次の読み込みで直る */ }
+  if (S.tab === 'photos') renderLeft();
+}
+async function viewPhoto(pid) {
+  const el = document.createElement('div');
+  el.className = 'modal';
+  el.innerHTML = '<div class="box"><p class="muted">読み込み中…</p><div class="row" style="justify-content:flex-end"><button data-x="close">閉じる</button></div></div>';
+  el.addEventListener('click', e => { if (e.target === el || e.target.closest('[data-x=close]')) el.remove(); });
+  document.body.appendChild(el);
+  try {
+    const j = await api('getPhoto', { pid });
+    if (el.isConnected) el.querySelector('.box p').outerHTML = `<img src="data:${h(j.mime || 'image/jpeg')};base64,${j.b64}" style="max-width:100%;display:block;margin:0 auto" alt="">`;
+  } catch (e) { const p = el.querySelector('.box p'); if (p) p.textContent = e.message; }
 }
 
 // ---- 履歴 ----
@@ -718,7 +877,25 @@ document.addEventListener('click', async e => {
     ls.set('kensa-editor.conn', S.conn);
     boot();
   }
-  else if (act === 'tab') { S.tab = b.dataset.t; renderLeft(); renderMid(); renderPvDevices(); updatePreview(); if (S.tab === 'series') checkImages(); }
+  else if (act === 'tab') { S.tab = b.dataset.t; renderLeft(); renderMid(); renderPvDevices(); updatePreview(); if (S.tab === 'series') checkImages(); if (S.tab === 'photos') loadPhotoList(); }
+  else if (act === 'grp') { const k = b.dataset.g; const cur = b.querySelector('.arr').textContent === '▾'; S.grp[k] = !cur; ls.set('kensa-editor.grp', S.grp); renderLeft(); }
+  else if (act === 'phmode') { S.ph.mode = b.dataset.m; S.ph.list = null; S.ph.err = ''; renderLeft(); renderMid(); loadPhotoList(); }
+  else if (act === 'phdev') {
+    S.ph.dev = b.dataset.id; renderLeft(); renderMid(); loadPhotoList();
+    // 右のプレビューもその機器にする（選べるときだけ）
+    const sel = $('#pvdev');
+    if ([...sel.options].some(o => o.value === S.ph.dev)) { sel.value = S.ph.dev; updatePreview(); }
+  }
+  else if (act === 'phman') { S.ph.man = b.dataset.k; renderLeft(); renderMid(); loadPhotoList(); }
+  else if (act === 'phview') viewPhoto(b.dataset.pid);
+  else if (act === 'phdel') {
+    const manual = S.ph.mode === 'manual';
+    if (!confirm(`この${manual ? '手順画像' : '写真'}を削除します（iPhone からも見えなくなります。Googleドライブのゴミ箱に30日残ります）。よろしいですか？`)) return;
+    if (manual && !S.pass && !(await askPass())) return;
+    try { await api('deletePhoto', { pid: b.dataset.pid, pass: S.pass }); }
+    catch (err) { if (err.code === 'badpass') S.pass = ''; alert(err.message); return; }
+    await refreshPhotoIndex(); await loadPhotoList();
+  }
   else if (act === 'csel') { S.csel = +b.dataset.i; renderLeft(); renderMid(); renderPvDevices(); updatePreview(); }
   else if (act === 'addCustom') {
     const C = (S.draft.customs = S.draft.customs || []);
@@ -741,7 +918,9 @@ document.addEventListener('click', async e => {
     S.csel = Math.max(0, Math.min(S.csel, S.draft.customs.length - 1)); renderLeft(); renderMid(); renderPvDevices(); changed();
   }
   else if ((act === 'upCustom' || act === 'downCustom') && (S.draft.customs || [])[S.csel]) {
-    const C = S.draft.customs; const j = act === 'upCustom' ? S.csel - 1 : S.csel + 1;
+    const C = S.draft.customs; const step = act === 'upCustom' ? -1 : 1;
+    let j = S.csel + step;
+    while (j >= 0 && j < C.length && C[j].base !== C[S.csel].base) j += step;
     if (j < 0 || j >= C.length) return;
     [C[S.csel], C[j]] = [C[j], C[S.csel]]; S.csel = j; renderLeft(); changed();
   }
@@ -763,7 +942,10 @@ document.addEventListener('click', async e => {
     T.splice(S.sel, 1); S.sel = Math.max(0, Math.min(S.sel, T.length - 1)); renderLeft(); renderMid(); changed(true);
   }
   else if ((act === 'upType' || act === 'downType') && T[S.sel]) {
-    const j = act === 'upType' ? S.sel - 1 : S.sel + 1;
+    // 同じ様式の中で1つ上・下と入れ替える（一覧は様式ごとにまとめて出しているため）
+    const step = act === 'upType' ? -1 : 1;
+    let j = S.sel + step;
+    while (j >= 0 && j < T.length && T[j].base !== T[S.sel].base) j += step;
     if (j < 0 || j >= T.length) return;
     [T[S.sel], T[j]] = [T[j], T[S.sel]]; S.sel = j; renderLeft(); changed(true);
   }
@@ -829,6 +1011,7 @@ document.addEventListener('change', e => {
   const t = e.target;
   const T = S.draft && S.draft.types[S.sel];
   if (t.id === 'pvdev' || t.id === 'pvmode' || t.id === 'pvdetails') { updatePreview(); return; }
+  if (t.dataset.phadd) { const files = [...(t.files || [])]; t.value = ''; addPhotoFiles(t.dataset.phadd, files); return; }
   // 追加した要素
   if ((t.dataset.cu || t.dataset.ctype) && S.draft) {
     const c = (S.draft.customs || [])[S.csel];
